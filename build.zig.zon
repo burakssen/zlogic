@@ -1,0 +1,17 @@
+.{
+    .name = .zlogic,
+    .version = "0.0.1",
+    .dependencies = .{
+        .raylib = .{
+            .url = "git+https://github.com/raysan5/raylib#a7ce14ee95af1a1e96ea95a27ce2cf51aaa32be3",
+            .hash = "raylib-5.6.0-dev-whq8uLjkBgVb25rNULFRhYqgF3hV-4CL7Hr9Rxsr2Dax",
+        },
+        .entt = .{
+            .url = "git+https://github.com/prime31/zig-ecs#dbf3647c2cc4f327fe87067e40f8436c7f87f209",
+            .hash = "entt-1.0.0-qJPtbNLVAgDPXaUbyRSsBTK75Cr1WujUA92kToJugWry",
+        },
+    },
+    .minimum_zig_version = "0.15.2",
+    .paths = .{""},
+    .fingerprint = 0x9e0cfb46448e5ad,
+}
