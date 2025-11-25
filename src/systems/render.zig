@@ -2,9 +2,9 @@ const std = @import("std");
 const rl = @import("raylib").rl;
 const entt = @import("entt");
 const components = @import("components");
-const theme_mod = @import("../theme.zig");
+const types = @import("types");
+const theme_mod = @import("theme");
 const Theme = theme_mod.Theme;
-const types = @import("../types.zig");
 
 const Transform = components.Transform;
 const Gate = components.Gate;

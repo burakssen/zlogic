@@ -26,7 +26,7 @@ pub fn build(b: *std.Build) void {
     const entt_mod = entt_dep.module("zig-ecs");
 
     const components_mod = b.createModule(.{
-        .root_source_file = b.path("src/domain/components/mod.zig"),
+        .root_source_file = b.path("src/components/mod.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
@@ -34,25 +34,48 @@ pub fn build(b: *std.Build) void {
         },
     });
 
-    const systems_mod = b.createModule(.{
-        .root_source_file = b.path("src/domain/systems/mod.zig"),
+    const types_mod = b.createModule(.{
+        .root_source_file = b.path("src/types.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
+            .{ .name = "raylib", .module = raylib_mod },
             .{ .name = "entt", .module = entt_mod },
             .{ .name = "components", .module = components_mod },
+        },
+    });
+
+    const theme_mod = b.createModule(.{
+        .root_source_file = b.path("src/theme.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
             .{ .name = "raylib", .module = raylib_mod },
         },
     });
 
     const factory_mod = b.createModule(.{
-        .root_source_file = b.path("src/domain/factory.zig"),
+        .root_source_file = b.path("src/factory.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
             .{ .name = "entt", .module = entt_mod },
             .{ .name = "components", .module = components_mod },
             .{ .name = "raylib", .module = raylib_mod },
+        },
+    });
+
+    const systems_mod = b.createModule(.{
+        .root_source_file = b.path("src/systems/mod.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "entt", .module = entt_mod },
+            .{ .name = "components", .module = components_mod },
+            .{ .name = "raylib", .module = raylib_mod },
+            .{ .name = "factory", .module = factory_mod },
+            .{ .name = "types", .module = types_mod },
+            .{ .name = "theme", .module = theme_mod },
         },
     });
 
@@ -66,6 +89,7 @@ pub fn build(b: *std.Build) void {
             .{ .name = "components", .module = components_mod },
             .{ .name = "systems", .module = systems_mod },
             .{ .name = "factory", .module = factory_mod },
+            .{ .name = "types", .module = types_mod },
         },
     });
 

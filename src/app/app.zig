@@ -7,9 +7,9 @@ const entt = @import("entt");
 const components = @import("components");
 const systems = @import("systems");
 
-const InputSystem = @import("systems/input.zig").InputSystem;
-const RenderSystem = @import("systems/render.zig").RenderSystem;
-const types = @import("types.zig");
+const InputSystem = systems.InputSystem;
+const RenderSystem = systems.RenderSystem;
+const types = @import("types");
 
 const App = @This();
 

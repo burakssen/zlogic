@@ -2,8 +2,8 @@ const std = @import("std");
 const rl = @import("raylib").rl;
 const entt = @import("entt");
 const components = @import("components");
-const types = @import("../types.zig"); // Relative path from src/app/systems/
-const theme_mod = @import("../theme.zig");
+const types = @import("types");
+const theme_mod = @import("theme");
 const Theme = theme_mod.Theme;
 const factory = @import("factory"); // This might be an issue if factory is not a package. 
 // Checked build.zig/zon? Factory seems to be imported as module "factory" in app/input.zig
