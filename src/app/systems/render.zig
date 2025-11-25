@@ -2,164 +2,39 @@ const std = @import("std");
 const rl = @import("raylib").rl;
 const entt = @import("entt");
 const components = @import("components");
-const Theme = @import("theme.zig").Theme;
-const types = @import("types.zig");
+const theme_mod = @import("../theme.zig");
+const Theme = theme_mod.Theme;
+const types = @import("../types.zig");
 
 const Transform = components.Transform;
 const Gate = components.Gate;
 const Wire = components.Wire;
 const Label = components.Label;
 
-pub const GRID_SIZE: i32 = 20;
+const GRID_SIZE: i32 = 20;
 
-pub fn draw(registry: *entt.Registry, window_size: rl.Vector2, state: types.AppState) void {
-    rl.BeginDrawing();
-    rl.ClearBackground(Theme.background);
-
-    drawGrid(window_size);
-
-    // Draw Wires
-    var wire_view = registry.view(.{ Wire, rl.Color }, .{});
-    var wire_it = wire_view.entityIterator();
-    while (wire_it.next()) |entity| {
-        const wire = registry.getConst(Wire, entity);
-        var color = Theme.wire_inactive;
-        var thickness: f32 = 2.0;
-
-        if (wire.active) {
-            color = Theme.wire_active;
-            // Glow effect
-            rl.DrawLineEx(wire.start, wire.end, 4.0, rl.Fade(color, 0.4));
-            thickness = 2.0;
-        }
-        rl.DrawLineEx(wire.start, wire.end, thickness, color);
+pub const RenderSystem = struct {
+    
+    pub fn init() RenderSystem {
+        return .{};
     }
 
-    // Draw Gates
-    var view = registry.view(.{ Transform, Gate }, .{});
-    var it = view.entityIterator();
-    while (it.next()) |entity| {
-        const transform = registry.getConst(Transform, entity);
-        const gate = registry.getConst(Gate, entity);
-        drawGate(gate, transform.position);
+    pub fn update(self: *RenderSystem, registry: *entt.Registry, window_size: rl.Vector2, state: types.AppState) void {
+        _ = self;
+        rl.BeginDrawing();
+        defer rl.EndDrawing();
 
-        // Draw Label
-        if (registry.tryGetConst(Label, entity)) |label| {
-            var is_editing = false;
-            switch (state.interaction) {
-                .EditingLabel => |e| if (e == entity) {
-                    is_editing = true;
-                },
-                else => {},
-            }
+        rl.ClearBackground(Theme.background);
 
-            if (label.len > 0 or is_editing) {
-                const text = if (label.len > 0) label.text[0..label.len] else "";
-                const text_w = rl.MeasureText(text.ptr, 10);
-                const text_pos_x = @as(c_int, @intFromFloat(transform.position.x + gate.width / 2.0)) - @divTrunc(text_w, 2);
-                const text_pos_y = @as(c_int, @intFromFloat(transform.position.y - 15));
+        drawGrid(window_size);
+        drawWires(registry);
+        drawGates(registry, state);
+        drawInteractions(registry, window_size, state);
+        drawToolbar(window_size, state);
 
-                if (is_editing) {
-                    // Draw editing background
-                    rl.DrawRectangle(text_pos_x - 2, text_pos_y - 2, text_w + 4 + 5, 14, Theme.gate_body);
-                    rl.DrawRectangleLines(text_pos_x - 2, text_pos_y - 2, text_w + 4 + 5, 14, Theme.wire_active);
-
-                    // Blinking cursor
-                    if (@mod(@as(i32, @intFromFloat(rl.GetTime() * 2.0)), 2) == 0) {
-                        rl.DrawLine(text_pos_x + text_w + 2, text_pos_y, text_pos_x + text_w + 2, text_pos_y + 10, Theme.wire_active);
-                    }
-                }
-
-                rl.DrawText(text.ptr, text_pos_x, text_pos_y, 10, Theme.gate_text);
-            }
-        }
+        rl.DrawFPS(10, 10);
     }
-
-    // Interaction Overlays
-    switch (state.interaction) {
-        .DrawingWire => |start_pos| {
-            if (start_pos) |start| {
-                const mouse_pos = rl.GetMousePosition();
-                rl.DrawLineEx(start, mouse_pos, 2.0, rl.Fade(Theme.wire_inactive, 0.5));
-            }
-        },
-        .PlacingGate => {
-            const mouse_pos = rl.GetMousePosition();
-            const toolbar_y = window_size.y - Theme.Layout.toolbar_height;
-
-            if (mouse_pos.y < toolbar_y) {
-                // Check for overlaps with existing gates or pins to hide preview
-                var overlap = false;
-                var check_view = registry.view(.{ Transform, Gate }, .{});
-                var check_it = check_view.entityIterator();
-                while (check_it.next()) |entity| {
-                    const t = check_view.getConst(Transform, entity);
-                    const g = check_view.getConst(Gate, entity);
-
-                    // Gate Body
-                    const rect = rl.Rectangle{ .x = t.position.x, .y = t.position.y, .width = g.width, .height = g.height };
-                    if (rl.CheckCollisionPointRec(mouse_pos, rect)) {
-                        overlap = true;
-                        break;
-                    }
-
-                    // Pins (Reuse simple radius check)
-                    const pin_radius = 10.0; // Slightly larger for UI feel
-                    if (g.gate_type != .OUTPUT and rl.CheckCollisionPointCircle(mouse_pos, g.getOutputPos(t.position), pin_radius)) {
-                        overlap = true;
-                        break;
-                    }
-                    if (g.gate_type != .INPUT) {
-                        if (rl.CheckCollisionPointCircle(mouse_pos, g.getInputPos(t.position, 0), pin_radius)) {
-                            overlap = true;
-                            break;
-                        }
-                        if (g.gate_type != .NOT and g.gate_type != .OUTPUT and rl.CheckCollisionPointCircle(mouse_pos, g.getInputPos(t.position, 1), pin_radius)) {
-                            overlap = true;
-                            break;
-                        }
-                    }
-                }
-
-                // Also check wire endpoints for cleaner UI
-                if (!overlap) {
-                    var check_wire_view = registry.view(.{Wire}, .{});
-                    var check_wire_it = check_wire_view.entityIterator();
-                    while (check_wire_it.next()) |e| {
-                        const w = check_wire_view.getConst(e);
-                        if (rl.CheckCollisionPointCircle(mouse_pos, w.start, 8.0) or rl.CheckCollisionPointCircle(mouse_pos, w.end, 8.0)) {
-                            overlap = true;
-                            break;
-                        }
-                    }
-                }
-
-                if (!overlap) {
-                    const grid_size_f = @as(f32, @floatFromInt(GRID_SIZE));
-
-                    const temp_gate = Gate{ .gate_type = state.current_gate_type };
-                    const half_w = temp_gate.width / 2.0;
-                    const half_h = temp_gate.height / 2.0;
-
-                    const raw_tl_x = mouse_pos.x - half_w;
-                    const raw_tl_y = mouse_pos.y - half_h;
-
-                    const snapped_tl_x = @round(raw_tl_x / grid_size_f) * grid_size_f;
-                    const snapped_tl_y = @round(raw_tl_y / grid_size_f) * grid_size_f;
-                    const place_pos = rl.Vector2{ .x = snapped_tl_x, .y = snapped_tl_y };
-
-                    drawGate(temp_gate, place_pos); // Ghost
-                }
-            }
-        },
-        else => {},
-    }
-
-    drawToolbar(window_size, state);
-
-    rl.DrawFPS(10, 10);
-    rl.EndDrawing();
-}
+};
 
 fn drawGrid(window_size: rl.Vector2) void {
     const width = @as(c_int, @intFromFloat(window_size.x));
@@ -176,7 +51,70 @@ fn drawGrid(window_size: rl.Vector2) void {
     }
 }
 
-fn drawGate(gate: Gate, position: rl.Vector2) void {
+fn drawWires(registry: *entt.Registry) void {
+    var wire_view = registry.view(.{ Wire, rl.Color }, .{});
+    var wire_it = wire_view.entityIterator();
+    while (wire_it.next()) |entity| {
+        const wire = registry.getConst(Wire, entity);
+        var color = Theme.wire_inactive;
+        var thickness: f32 = 2.0;
+
+        if (wire.active) {
+            color = Theme.wire_active;
+            // Glow effect
+            rl.DrawLineEx(wire.start, wire.end, 4.0, rl.Fade(color, 0.4));
+            thickness = 2.0;
+        }
+        rl.DrawLineEx(wire.start, wire.end, thickness, color);
+    }
+}
+
+fn drawGates(registry: *entt.Registry, state: types.AppState) void {
+    var view = registry.view(.{ Transform, Gate }, .{});
+    var it = view.entityIterator();
+    while (it.next()) |entity| {
+        const transform = registry.getConst(Transform, entity);
+        const gate = registry.getConst(Gate, entity);
+        drawGateBody(gate, transform.position);
+
+        // Draw Label
+        if (registry.tryGetConst(Label, entity)) |label| {
+            drawLabel(label, transform.position, gate.width, state.interaction, entity);
+        }
+    }
+}
+
+fn drawLabel(label: Label, pos: rl.Vector2, gate_width: f32, interaction: types.InteractionState, entity: entt.Entity) void {
+    var is_editing = false;
+    switch (interaction) {
+        .EditingLabel => |e| if (e == entity) {
+            is_editing = true;
+        },
+        else => {},
+    }
+
+    if (label.len > 0 or is_editing) {
+        const text = if (label.len > 0) label.text[0..label.len] else "";
+        const text_w = rl.MeasureText(text.ptr, 10);
+        const text_pos_x = @as(c_int, @intFromFloat(pos.x + gate_width / 2.0)) - @divTrunc(text_w, 2);
+        const text_pos_y = @as(c_int, @intFromFloat(pos.y - 15));
+
+        if (is_editing) {
+            // Draw editing background
+            rl.DrawRectangle(text_pos_x - 2, text_pos_y - 2, text_w + 4 + 5, 14, Theme.gate_body);
+            rl.DrawRectangleLines(text_pos_x - 2, text_pos_y - 2, text_w + 4 + 5, 14, Theme.wire_active);
+
+            // Blinking cursor
+            if (@mod(@as(i32, @intFromFloat(rl.GetTime() * 2.0)), 2) == 0) {
+                rl.DrawLine(text_pos_x + text_w + 2, text_pos_y, text_pos_x + text_w + 2, text_pos_y + 10, Theme.wire_active);
+            }
+        }
+
+        rl.DrawText(text.ptr, text_pos_x, text_pos_y, 10, Theme.gate_text);
+    }
+}
+
+fn drawGateBody(gate: Gate, position: rl.Vector2) void {
     const body_rect = rl.Rectangle{
         .x = position.x + 10,
         .y = position.y + 5,
@@ -262,6 +200,90 @@ fn drawPin(pos: rl.Vector2, active: bool) void {
         rl.DrawCircle(@as(c_int, @intFromFloat(pos.x)), @as(c_int, @intFromFloat(pos.y)), 4, color);
     } else {
         rl.DrawCircleLines(@as(c_int, @intFromFloat(pos.x)), @as(c_int, @intFromFloat(pos.y)), 4, color);
+    }
+}
+
+fn drawInteractions(registry: *entt.Registry, window_size: rl.Vector2, state: types.AppState) void {
+    switch (state.interaction) {
+        .DrawingWire => |start_pos| {
+            if (start_pos) |start| {
+                const mouse_pos = rl.GetMousePosition();
+                rl.DrawLineEx(start, mouse_pos, 2.0, rl.Fade(Theme.wire_inactive, 0.5));
+            }
+        },
+        .PlacingGate => {
+            drawPlacementPreview(registry, window_size, state);
+        },
+        else => {},
+    }
+}
+
+fn drawPlacementPreview(registry: *entt.Registry, window_size: rl.Vector2, state: types.AppState) void {
+    const mouse_pos = rl.GetMousePosition();
+    const toolbar_y = window_size.y - Theme.Layout.toolbar_height;
+
+    if (mouse_pos.y >= toolbar_y) return;
+
+    // Check for overlaps with existing gates or pins to hide preview
+    var overlap = false;
+    var check_view = registry.view(.{ Transform, Gate }, .{});
+    var check_it = check_view.entityIterator();
+    while (check_it.next()) |entity| {
+        const t = check_view.getConst(Transform, entity);
+        const g = check_view.getConst(Gate, entity);
+
+        // Gate Body
+        const rect = rl.Rectangle{ .x = t.position.x, .y = t.position.y, .width = g.width, .height = g.height };
+        if (rl.CheckCollisionPointRec(mouse_pos, rect)) {
+            overlap = true;
+            break;
+        }
+
+        // Pins (Reuse simple radius check)
+        const pin_radius = 10.0;
+        if (g.gate_type != .OUTPUT and rl.CheckCollisionPointCircle(mouse_pos, g.getOutputPos(t.position), pin_radius)) {
+            overlap = true;
+            break;
+        }
+        if (g.gate_type != .INPUT) {
+            if (rl.CheckCollisionPointCircle(mouse_pos, g.getInputPos(t.position, 0), pin_radius)) {
+                overlap = true;
+                break;
+            }
+            if (g.gate_type != .NOT and g.gate_type != .OUTPUT and rl.CheckCollisionPointCircle(mouse_pos, g.getInputPos(t.position, 1), pin_radius)) {
+                overlap = true;
+                break;
+            }
+        }
+    }
+
+    if (!overlap) {
+        var check_wire_view = registry.view(.{Wire}, .{});
+        var check_wire_it = check_wire_view.entityIterator();
+        while (check_wire_it.next()) |e| {
+            const w = check_wire_view.getConst(e);
+            if (rl.CheckCollisionPointCircle(mouse_pos, w.start, 8.0) or rl.CheckCollisionPointCircle(mouse_pos, w.end, 8.0)) {
+                overlap = true;
+                break;
+            }
+        }
+    }
+
+    if (!overlap) {
+        const grid_size_f = @as(f32, @floatFromInt(GRID_SIZE));
+
+        const temp_gate = Gate{ .gate_type = state.current_gate_type };
+        const half_w = temp_gate.width / 2.0;
+        const half_h = temp_gate.height / 2.0;
+
+        const raw_tl_x = mouse_pos.x - half_w;
+        const raw_tl_y = mouse_pos.y - half_h;
+
+        const snapped_tl_x = @round(raw_tl_x / grid_size_f) * grid_size_f;
+        const snapped_tl_y = @round(raw_tl_y / grid_size_f) * grid_size_f;
+        const place_pos = rl.Vector2{ .x = snapped_tl_x, .y = snapped_tl_y };
+
+        drawGateBody(temp_gate, place_pos); // Ghost
     }
 }
 

@@ -7,8 +7,8 @@ const entt = @import("entt");
 const components = @import("components");
 const systems = @import("systems");
 
-const input = @import("input.zig");
-const renderer = @import("renderer.zig");
+const InputSystem = @import("systems/input.zig").InputSystem;
+const RenderSystem = @import("systems/render.zig").RenderSystem;
 const types = @import("types.zig");
 
 const App = @This();
@@ -19,6 +19,8 @@ window_title: [:0]const u8,
 registry: entt.Registry,
 state: types.AppState,
 simulation: systems.Simulation,
+input_system: InputSystem,
+render_system: RenderSystem,
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -37,6 +39,8 @@ pub fn init(
             .current_gate_type = .AND,
         },
         .simulation = systems.Simulation.init(),
+        .input_system = InputSystem.init(),
+        .render_system = RenderSystem.init(),
     };
 
     rl.InitWindow(
@@ -70,12 +74,12 @@ pub fn run(self: *App) void {
 }
 
 fn update(self: *App) void {
-    input.updateInput(&self.registry, &self.state, self.window_size);
+    self.input_system.update(&self.registry, &self.state, self.window_size);
     self.simulation.update(&self.registry, self.allocator) catch |err| {
         std.debug.print("Simulation error: {}\n", .{err});
     };
 }
 
 fn draw(self: *App) void {
-    renderer.draw(&self.registry, self.window_size, self.state);
+    self.render_system.update(&self.registry, self.window_size, self.state);
 }

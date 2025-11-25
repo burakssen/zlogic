@@ -35,7 +35,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const systems_mod = b.createModule(.{
-        .root_source_file = b.path("src/domain/systems.zig"),
+        .root_source_file = b.path("src/domain/systems/mod.zig"),
         .target = target,
         .optimize = optimize,
         .imports = &.{
