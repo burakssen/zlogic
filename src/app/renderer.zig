@@ -232,7 +232,12 @@ fn drawToolbar(window_size: rl.Vector2, state: types.AppState) void {
         };
         
         var color = Theme.button_inactive;
-        if (state.current_gate_type == gate_type) {
+        const is_selected = switch (state.interaction) {
+            .PlacingGate => state.current_gate_type == gate_type,
+            else => false,
+        };
+        
+        if (is_selected) {
             color = Theme.button_active;
         } else {
             if (rl.CheckCollisionPointRec(rl.GetMousePosition(), rect)) {
