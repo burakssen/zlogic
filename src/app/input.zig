@@ -20,8 +20,9 @@ const ConnectionPoint = struct {
 
 pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size: rl.Vector2) void {
     const mouse_pos = rl.GetMousePosition();
+    const grid_size_f = @as(f32, @floatFromInt(renderer.GRID_SIZE));
 
-    // Handle Label Editing
+    // Handle Continuous Interaction States
     switch (state.interaction) {
         .EditingLabel => |entity| {
             if (rl.IsKeyPressed(rl.KEY_ENTER) or rl.IsKeyPressed(rl.KEY_ESCAPE) or (rl.IsMouseButtonPressed(rl.MOUSE_BUTTON_LEFT) and !isMouseOverEntity(registry, entity, mouse_pos))) {
@@ -49,10 +50,73 @@ pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size
             }
             return; // Block other inputs while editing
         },
+        .MovingGate => |data| {
+            if (rl.IsMouseButtonReleased(rl.MOUSE_BUTTON_LEFT)) {
+                // Check for click (Toggle Switch) if movement was minimal
+                if (registry.tryGet(Transform, data.entity)) |t| {
+                    const diff = vSub(t.position, data.initial_pos);
+                    if (vLenSqr(diff) < 4.0) { // 2*2 = 4
+                        if (registry.tryGet(Gate, data.entity)) |g| {
+                            if (g.gate_type == .SWITCH) {
+                                g.output = !g.output;
+                            }
+                        }
+                    }
+                }
+                state.interaction = .Idle;
+            } else {
+                // Handle Dragging
+                 if (registry.tryGet(Transform, data.entity)) |t| {
+                    if (registry.tryGetConst(Gate, data.entity)) |g| {
+                        const raw_pos = vSub(mouse_pos, data.offset);
+                        const new_snapped_x = @round(raw_pos.x / grid_size_f) * grid_size_f;
+                        const new_snapped_y = @round(raw_pos.y / grid_size_f) * grid_size_f;
+                        const new_pos = rl.Vector2{ .x = new_snapped_x, .y = new_snapped_y };
+                        
+                        const old_pos = t.position;
+
+                        if (new_pos.x != old_pos.x or new_pos.y != old_pos.y) {
+                            const delta = vSub(new_pos, old_pos);
+                            t.position = new_pos;
+
+                            // Move connected wires
+                            var wire_view = registry.view(.{Wire}, .{});
+                            var wire_it = wire_view.entityIterator();
+                            while (wire_it.next()) |w_entity| {
+                                var wire = wire_view.get(w_entity);
+                                
+                                const movePointIfMatch = struct {
+                                    fn do(pt: *rl.Vector2, target: rl.Vector2, d: rl.Vector2) void {
+                                        if (rl.CheckCollisionPointCircle(target, pt.*, 1.0)) {
+                                            pt.* = vAdd(pt.*, d);
+                                        }
+                                    }
+                                }.do;
+
+                                if (g.gate_type != .OUTPUT) {
+                                    movePointIfMatch(&wire.start, g.getOutputPos(old_pos), delta);
+                                    movePointIfMatch(&wire.end, g.getOutputPos(old_pos), delta);
+                                }
+                                
+                                if (g.gate_type != .SWITCH) {
+                                     movePointIfMatch(&wire.start, g.getInputPos(old_pos, 0), delta);
+                                     movePointIfMatch(&wire.end, g.getInputPos(old_pos, 0), delta);
+
+                                     if (g.gate_type != .NOT and g.gate_type != .OUTPUT) {
+                                         movePointIfMatch(&wire.start, g.getInputPos(old_pos, 1), delta);
+                                         movePointIfMatch(&wire.end, g.getInputPos(old_pos, 1), delta);
+                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return; // Block other inputs
+        },
         else => {},
     }
 
-    const grid_size_f = @as(f32, @floatFromInt(renderer.GRID_SIZE));
     const snapped_x = @round(mouse_pos.x / grid_size_f) * grid_size_f;
     const snapped_y = @round(mouse_pos.y / grid_size_f) * grid_size_f;
     const snapped_pos = rl.Vector2{ .x = snapped_x, .y = snapped_y };
@@ -102,10 +166,6 @@ pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size
              }
         }
 
-        if (handleSwitchToggle(registry, mouse_pos)) {
-            return;
-        }
-
         const match = getHoveredConnectionPoint(registry, mouse_pos);
         
         // If we hit a wire segment, split it immediately to create a valid node
@@ -152,66 +212,16 @@ pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size
                     if (getHoveredGate(registry, mouse_pos)) |entity| {
                         if (registry.tryGetConst(Transform, entity)) |t| {
                              const offset = vSub(mouse_pos, t.position);
-                             state.interaction = .{ .MovingGate = .{ .entity = entity, .offset = offset } };
+                             state.interaction = .{ .MovingGate = .{ 
+                                 .entity = entity, 
+                                 .offset = offset,
+                                 .initial_pos = t.position
+                             } };
                         }
                     }
                 }
             },
-            .EditingLabel => {}, // Handled at start of function
-            .MovingGate => |data| {
-                if (rl.IsMouseButtonReleased(rl.MOUSE_BUTTON_LEFT)) {
-                    state.interaction = .Idle;
-                } else {
-                    if (registry.tryGet(Transform, data.entity)) |t| {
-                        if (registry.tryGetConst(Gate, data.entity)) |g| {
-                            const raw_pos = vSub(mouse_pos, data.offset);
-                            const new_snapped_x = @round(raw_pos.x / grid_size_f) * grid_size_f;
-                            const new_snapped_y = @round(raw_pos.y / grid_size_f) * grid_size_f;
-                            const new_pos = rl.Vector2{ .x = new_snapped_x, .y = new_snapped_y };
-                            
-                            const old_pos = t.position;
-
-                            if (new_pos.x != old_pos.x or new_pos.y != old_pos.y) {
-                                const delta = vSub(new_pos, old_pos);
-                                t.position = new_pos;
-
-                                // Move connected wires
-                                var wire_view = registry.view(.{Wire}, .{});
-                                var wire_it = wire_view.entityIterator();
-                                while (wire_it.next()) |w_entity| {
-                                    var wire = wire_view.get(w_entity);
-                                    
-                                    // Helper to check and move pin connection
-                                    const movePointIfMatch = struct {
-                                        fn do(pt: *rl.Vector2, target: rl.Vector2, d: rl.Vector2) void {
-                                            if (rl.CheckCollisionPointCircle(target, pt.*, 1.0)) {
-                                                pt.* = vAdd(pt.*, d);
-                                            }
-                                        }
-                                    }.do;
-
-                                    // Check Output Pin
-                                    if (g.gate_type != .OUTPUT) { // Output gate has no output pin
-                                        movePointIfMatch(&wire.start, g.getOutputPos(old_pos), delta);
-                                        movePointIfMatch(&wire.end, g.getOutputPos(old_pos), delta);
-                                    }
-                                    
-                                    // Check Input Pins
-                                    if (g.gate_type != .SWITCH) {
-                                         movePointIfMatch(&wire.start, g.getInputPos(old_pos, 0), delta);
-                                         movePointIfMatch(&wire.end, g.getInputPos(old_pos, 0), delta);
-
-                                         if (g.gate_type != .NOT and g.gate_type != .OUTPUT) {
-                                             movePointIfMatch(&wire.start, g.getInputPos(old_pos, 1), delta);
-                                             movePointIfMatch(&wire.end, g.getInputPos(old_pos, 1), delta);
-                                         }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            },
+            else => {}, // EditingLabel, MovingGate handled above
         }
     }
 
@@ -290,28 +300,6 @@ fn getHoveredConnectionPoint(registry: *entt.Registry, mouse_pos: rl.Vector2) ?C
     }
 
     return null;
-}
-
-fn handleSwitchToggle(registry: *entt.Registry, mouse_pos: rl.Vector2) bool {
-    var view = registry.view(.{ Transform, Gate }, .{});
-    var it = view.entityIterator();
-    while (it.next()) |entity| {
-        const t = view.getConst(Transform, entity);
-        var g = view.get(Gate, entity);
-        if (g.gate_type == .SWITCH) {
-            const rect = rl.Rectangle{
-                .x = t.position.x,
-                .y = t.position.y,
-                .width = g.width,
-                .height = g.height,
-            };
-            if (rl.CheckCollisionPointRec(mouse_pos, rect)) {
-                g.output = !g.output;
-                return true;
-            }
-        }
-    }
-    return false;
 }
 
 fn getHoveredGate(registry: *entt.Registry, mouse_pos: rl.Vector2) ?entt.Entity {

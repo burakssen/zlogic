@@ -7,7 +7,7 @@ pub const InteractionState = union(enum) {
     PlacingGate,
     DrawingWire: ?rl.Vector2,
     EditingLabel: entt.Entity,
-    MovingGate: struct { entity: entt.Entity, offset: rl.Vector2 },
+    MovingGate: struct { entity: entt.Entity, offset: rl.Vector2, initial_pos: rl.Vector2 },
 };
 
 pub const AppState = struct {
