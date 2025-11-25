@@ -15,7 +15,7 @@ const App = @This();
 
 allocator: std.mem.Allocator,
 window_size: rl.Vector2,
-window_title: []const u8,
+window_title: [:0]const u8,
 registry: entt.Registry,
 state: types.AppState,
 simulation: systems.Simulation,
@@ -23,7 +23,7 @@ simulation: systems.Simulation,
 pub fn init(
     allocator: std.mem.Allocator,
     window_size: rl.Vector2,
-    window_title: []const u8,
+    window_title: [:0]const u8,
 ) !*App {
     const app = try allocator.create(App);
 
@@ -45,6 +45,8 @@ pub fn init(
         window_title.ptr,
     );
     rl.SetTargetFPS(60);
+
+    rl.SetExitKey(rl.KEY_NULL);
 
     return app;
 }

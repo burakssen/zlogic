@@ -29,7 +29,7 @@ pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size
                 state.interaction = .Idle;
                 return;
             }
-            
+
             if (registry.tryGet(Label, entity)) |label| {
                 var key = rl.GetCharPressed();
                 while (key > 0) {
@@ -51,13 +51,14 @@ pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size
             return; // Block other inputs while editing
         },
         .MovingGate => |data| {
-            if (rl.IsMouseButtonReleased(rl.MOUSE_BUTTON_LEFT)) {
-                // Check for click (Toggle Switch) if movement was minimal
+            // Check if mouse is NOT down (Release or Up)
+            if (!rl.IsMouseButtonDown(rl.MOUSE_BUTTON_LEFT)) {
+                // Check for click (Toggle input) if movement was minimal
                 if (registry.tryGet(Transform, data.entity)) |t| {
-                    const diff = vSub(t.position, data.initial_pos);
-                    if (vLenSqr(diff) < 4.0) { // 2*2 = 4
+                    const diff = rl.Vector2Subtract(t.position, data.initial_pos);
+                    if (rl.Vector2LengthSqr(diff) < 4.0) { // 2*2 = 4
                         if (registry.tryGet(Gate, data.entity)) |g| {
-                            if (g.gate_type == .SWITCH) {
+                            if (g.gate_type == .INPUT) {
                                 g.output = !g.output;
                             }
                         }
@@ -66,17 +67,17 @@ pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size
                 state.interaction = .Idle;
             } else {
                 // Handle Dragging
-                 if (registry.tryGet(Transform, data.entity)) |t| {
+                if (registry.tryGet(Transform, data.entity)) |t| {
                     if (registry.tryGetConst(Gate, data.entity)) |g| {
-                        const raw_pos = vSub(mouse_pos, data.offset);
+                        const raw_pos = rl.Vector2Subtract(mouse_pos, data.offset);
                         const new_snapped_x = @round(raw_pos.x / grid_size_f) * grid_size_f;
                         const new_snapped_y = @round(raw_pos.y / grid_size_f) * grid_size_f;
                         const new_pos = rl.Vector2{ .x = new_snapped_x, .y = new_snapped_y };
-                        
+
                         const old_pos = t.position;
 
                         if (new_pos.x != old_pos.x or new_pos.y != old_pos.y) {
-                            const delta = vSub(new_pos, old_pos);
+                            const delta = rl.Vector2Subtract(new_pos, old_pos);
                             t.position = new_pos;
 
                             // Move connected wires
@@ -84,11 +85,11 @@ pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size
                             var wire_it = wire_view.entityIterator();
                             while (wire_it.next()) |w_entity| {
                                 var wire = wire_view.get(w_entity);
-                                
+
                                 const movePointIfMatch = struct {
                                     fn do(pt: *rl.Vector2, target: rl.Vector2, d: rl.Vector2) void {
                                         if (rl.CheckCollisionPointCircle(target, pt.*, 1.0)) {
-                                            pt.* = vAdd(pt.*, d);
+                                            pt.* = rl.Vector2Add(pt.*, d);
                                         }
                                     }
                                 }.do;
@@ -97,15 +98,15 @@ pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size
                                     movePointIfMatch(&wire.start, g.getOutputPos(old_pos), delta);
                                     movePointIfMatch(&wire.end, g.getOutputPos(old_pos), delta);
                                 }
-                                
-                                if (g.gate_type != .SWITCH) {
-                                     movePointIfMatch(&wire.start, g.getInputPos(old_pos, 0), delta);
-                                     movePointIfMatch(&wire.end, g.getInputPos(old_pos, 0), delta);
 
-                                     if (g.gate_type != .NOT and g.gate_type != .OUTPUT) {
-                                         movePointIfMatch(&wire.start, g.getInputPos(old_pos, 1), delta);
-                                         movePointIfMatch(&wire.end, g.getInputPos(old_pos, 1), delta);
-                                     }
+                                if (g.gate_type != .INPUT) {
+                                    movePointIfMatch(&wire.start, g.getInputPos(old_pos, 0), delta);
+                                    movePointIfMatch(&wire.end, g.getInputPos(old_pos, 0), delta);
+
+                                    if (g.gate_type != .NOT and g.gate_type != .OUTPUT) {
+                                        movePointIfMatch(&wire.start, g.getInputPos(old_pos, 1), delta);
+                                        movePointIfMatch(&wire.end, g.getInputPos(old_pos, 1), delta);
+                                    }
                                 }
                             }
                         }
@@ -127,7 +128,7 @@ pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size
         if (rl.IsMouseButtonPressed(rl.MOUSE_BUTTON_LEFT)) {
             var start_x: f32 = 10.0;
 
-            const gates = [_]GateType{ .AND, .OR, .NOT, .SWITCH, .OUTPUT };
+            const gates = [_]GateType{ .AND, .OR, .NOT, .INPUT, .OUTPUT };
             for (gates) |gate_type| {
                 const rect = rl.Rectangle{
                     .x = start_x,
@@ -142,32 +143,27 @@ pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size
                 start_x += Theme.Layout.button_width + Theme.Layout.button_padding;
             }
         }
-        return; 
+        return;
     }
 
     if (rl.IsMouseButtonPressed(rl.MOUSE_BUTTON_LEFT)) {
         // Label Editing (Alt + Click)
         if (rl.IsKeyDown(rl.KEY_LEFT_ALT) or rl.IsKeyDown(rl.KEY_RIGHT_ALT)) {
-             var view = registry.view(.{Transform, Gate}, .{});
-             var it = view.entityIterator();
-             while (it.next()) |entity| {
-                 const t = view.getConst(Transform, entity);
-                 const g = view.getConst(Gate, entity);
-                 const rect = rl.Rectangle{
-                    .x = t.position.x, 
-                    .y = t.position.y, 
-                    .width = g.width, 
-                    .height = g.height 
-                 };
-                 if (rl.CheckCollisionPointRec(mouse_pos, rect)) {
-                     state.interaction = .{ .EditingLabel = entity };
-                     return;
-                 }
-             }
+            var view = registry.view(.{ Transform, Gate }, .{});
+            var it = view.entityIterator();
+            while (it.next()) |entity| {
+                const t = view.getConst(Transform, entity);
+                const g = view.getConst(Gate, entity);
+                const rect = rl.Rectangle{ .x = t.position.x, .y = t.position.y, .width = g.width, .height = g.height };
+                if (rl.CheckCollisionPointRec(mouse_pos, rect)) {
+                    state.interaction = .{ .EditingLabel = entity };
+                    return;
+                }
+            }
         }
 
         const match = getHoveredConnectionPoint(registry, mouse_pos);
-        
+
         // If we hit a wire segment, split it immediately to create a valid node
         if (match) |m| {
             if (m.entity_to_split) |e| {
@@ -179,11 +175,11 @@ pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size
             .DrawingWire => |start_opt| {
                 // Use the matched position (pin, endpoint, or new split node) or snap
                 const end = if (match) |m| m.position else snapped_pos;
-                
+
                 if (start_opt) |start| {
-                     factory.createWire(registry, start, end);
+                    factory.createWire(registry, start, end);
                 }
-                state.interaction = .Idle; 
+                state.interaction = .Idle;
             },
             .PlacingGate => {
                 if (match) |m| {
@@ -211,12 +207,8 @@ pub fn updateInput(registry: *entt.Registry, state: *types.AppState, window_size
                     // Check for Gate Dragging
                     if (getHoveredGate(registry, mouse_pos)) |entity| {
                         if (registry.tryGetConst(Transform, entity)) |t| {
-                             const offset = vSub(mouse_pos, t.position);
-                             state.interaction = .{ .MovingGate = .{ 
-                                 .entity = entity, 
-                                 .offset = offset,
-                                 .initial_pos = t.position
-                             } };
+                            const offset = rl.Vector2Subtract(mouse_pos, t.position);
+                            state.interaction = .{ .MovingGate = .{ .entity = entity, .offset = offset, .initial_pos = t.position } };
                         }
                     }
                 }
@@ -234,12 +226,12 @@ fn getHoveredConnectionPoint(registry: *entt.Registry, mouse_pos: rl.Vector2) ?C
     const pin_radius = 8.0;
 
     // 1. Check Gate Pins
-    var gate_view = registry.view(.{Transform, Gate}, .{});
+    var gate_view = registry.view(.{ Transform, Gate }, .{});
     var gate_it = gate_view.entityIterator();
     while (gate_it.next()) |entity| {
         const t = gate_view.getConst(Transform, entity);
         const g = gate_view.getConst(Gate, entity);
-        
+
         // Output Pin (Switch, AND, OR, NOT)
         if (g.gate_type != .OUTPUT) {
             const out_pos = g.getOutputPos(t.position);
@@ -247,20 +239,20 @@ fn getHoveredConnectionPoint(registry: *entt.Registry, mouse_pos: rl.Vector2) ?C
                 return .{ .position = out_pos };
             }
         }
-        
+
         // Input Pins (AND, OR, NOT, OUTPUT)
-        if (g.gate_type != .SWITCH) {
-             const in0 = g.getInputPos(t.position, 0);
-             if (rl.CheckCollisionPointCircle(mouse_pos, in0, pin_radius)) {
-                 return .{ .position = in0 };
-             }
-             
-             if (g.gate_type != .NOT and g.gate_type != .OUTPUT) {
-                 const in1 = g.getInputPos(t.position, 1);
-                 if (rl.CheckCollisionPointCircle(mouse_pos, in1, pin_radius)) {
-                     return .{ .position = in1 };
-                 }
-             }
+        if (g.gate_type != .INPUT) {
+            const in0 = g.getInputPos(t.position, 0);
+            if (rl.CheckCollisionPointCircle(mouse_pos, in0, pin_radius)) {
+                return .{ .position = in0 };
+            }
+
+            if (g.gate_type != .NOT and g.gate_type != .OUTPUT) {
+                const in1 = g.getInputPos(t.position, 1);
+                if (rl.CheckCollisionPointCircle(mouse_pos, in1, pin_radius)) {
+                    return .{ .position = in1 };
+                }
+            }
         }
     }
 
@@ -280,21 +272,18 @@ fn getHoveredConnectionPoint(registry: *entt.Registry, mouse_pos: rl.Vector2) ?C
 
         // Segment (Lower Priority)
         // Project mouse_pos onto segment AB
-        const ab = vSub(wire.end, wire.start);
-        const ap = vSub(mouse_pos, wire.start);
-        const len_sqr = vLenSqr(ab);
-        
+        const ab = rl.Vector2Subtract(wire.end, wire.start);
+        const ap = rl.Vector2Subtract(mouse_pos, wire.start);
+        const len_sqr = rl.Vector2LengthSqr(ab);
+
         if (len_sqr > 0.0) {
-            const t = vDot(ap, ab) / len_sqr;
+            const t = rl.Vector2DotProduct(ap, ab) / len_sqr;
             const t_clamped = @max(0.0, @min(1.0, t));
-            
-            const closest = vAdd(wire.start, vScale(ab, t_clamped));
-            
+
+            const closest = rl.Vector2Add(wire.start, rl.Vector2Scale(ab, t_clamped));
+
             if (rl.CheckCollisionPointCircle(mouse_pos, closest, pin_radius)) {
-                 return .{ 
-                     .position = closest, 
-                     .entity_to_split = entity 
-                 };
+                return .{ .position = closest, .entity_to_split = entity };
             }
         }
     }
@@ -303,17 +292,12 @@ fn getHoveredConnectionPoint(registry: *entt.Registry, mouse_pos: rl.Vector2) ?C
 }
 
 fn getHoveredGate(registry: *entt.Registry, mouse_pos: rl.Vector2) ?entt.Entity {
-    var view = registry.view(.{Transform, Gate}, .{});
+    var view = registry.view(.{ Transform, Gate }, .{});
     var it = view.entityIterator();
     while (it.next()) |entity| {
         const t = view.getConst(Transform, entity);
         const g = view.getConst(Gate, entity);
-        const rect = rl.Rectangle{
-            .x = t.position.x, 
-            .y = t.position.y, 
-            .width = g.width, 
-            .height = g.height 
-        };
+        const rect = rl.Rectangle{ .x = t.position.x, .y = t.position.y, .width = g.width, .height = g.height };
         if (rl.CheckCollisionPointRec(mouse_pos, rect)) {
             return entity;
         }
@@ -326,20 +310,9 @@ fn isMouseOverEntity(registry: *entt.Registry, entity: entt.Entity, mouse_pos: r
     if (!registry.valid(entity)) return false;
     if (registry.tryGetConst(Transform, entity)) |t| {
         if (registry.tryGetConst(Gate, entity)) |g| {
-             const rect = rl.Rectangle{
-                .x = t.position.x, 
-                .y = t.position.y, 
-                .width = g.width, 
-                .height = g.height 
-             };
-             return rl.CheckCollisionPointRec(mouse_pos, rect);
+            const rect = rl.Rectangle{ .x = t.position.x, .y = t.position.y, .width = g.width, .height = g.height };
+            return rl.CheckCollisionPointRec(mouse_pos, rect);
         }
     }
     return false;
 }
-
-fn vSub(a: rl.Vector2, b: rl.Vector2) rl.Vector2 { return .{ .x = a.x - b.x, .y = a.y - b.y }; }
-fn vAdd(a: rl.Vector2, b: rl.Vector2) rl.Vector2 { return .{ .x = a.x + b.x, .y = a.y + b.y }; }
-fn vScale(a: rl.Vector2, s: f32) rl.Vector2 { return .{ .x = a.x * s, .y = a.y * s }; }
-fn vDot(a: rl.Vector2, b: rl.Vector2) f32 { return a.x * b.x + a.y * b.y; }
-fn vLenSqr(a: rl.Vector2) f32 { return a.x * a.x + a.y * a.y; }

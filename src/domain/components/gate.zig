@@ -4,7 +4,7 @@ pub const GateType = enum {
     AND,
     OR,
     NOT,
-    SWITCH,
+    INPUT,
     OUTPUT,
 };
 
@@ -24,7 +24,7 @@ pub const Gate = struct {
 
     pub fn getInputPos(self: Gate, position: rl.Vector2, index: usize) rl.Vector2 {
         if (self.gate_type == .OUTPUT) {
-             return .{
+            return .{
                 .x = position.x,
                 .y = position.y + self.height * 0.5,
             };

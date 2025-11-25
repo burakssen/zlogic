@@ -47,7 +47,7 @@ pub const Simulation = struct {
         self.active_points.clearRetainingCapacity();
 
         // 1. Collect Active Sources (Gate Outputs that are ON)
-        var source_view = registry.view(.{Gate, Transform}, .{});
+        var source_view = registry.view(.{ Gate, Transform }, .{});
         var source_it = source_view.entityIterator();
         while (source_it.next()) |entity| {
             const gate = registry.getConst(Gate, entity);
@@ -60,14 +60,14 @@ pub const Simulation = struct {
         // 2. Propagate Signal through Wires (BFS)
         var i: usize = 0;
         var wire_view = registry.view(.{Wire}, .{});
-        
+
         while (i < self.active_points.items.len) : (i += 1) {
             const point = self.active_points.items[i];
-            
+
             var wire_it = wire_view.entityIterator();
             while (wire_it.next()) |entity| {
                 var wire = registry.get(Wire, entity);
-                
+
                 if (wire.active) continue;
 
                 const connected_start = rl.CheckCollisionPointCircle(wire.start, point, 5.0);
@@ -82,7 +82,7 @@ pub const Simulation = struct {
         }
 
         // 3. Apply Signals to Gate Inputs
-        var target_view = registry.view(.{Gate, Transform}, .{});
+        var target_view = registry.view(.{ Gate, Transform }, .{});
         var target_it = target_view.entityIterator();
         while (target_it.next()) |entity| {
             var gate = registry.get(Gate, entity);
@@ -98,7 +98,7 @@ pub const Simulation = struct {
                 if (!gate.inputs[1] and rl.CheckCollisionPointCircle(pt, in1, 5.0)) {
                     gate.inputs[1] = true;
                 }
-                
+
                 if (gate.inputs[0] and gate.inputs[1]) break;
             }
         }
@@ -115,7 +115,7 @@ pub const Simulation = struct {
                 .OR => gate.output = gate.inputs[0] or gate.inputs[1],
                 .NOT => gate.output = !gate.inputs[0],
                 .OUTPUT => gate.output = gate.inputs[0],
-                .SWITCH => {}, // State handled by Input system
+                .INPUT => {}, // State handled by Input system
             }
         }
     }
