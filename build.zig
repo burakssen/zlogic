@@ -10,7 +10,7 @@ pub fn build(b: *std.Build) void {
     });
 
     const raylib_mod = b.createModule(.{
-        .root_source_file = b.path("src/raylib.zig"),
+        .root_source_file = b.path("src/core/raylib.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -25,6 +25,37 @@ pub fn build(b: *std.Build) void {
 
     const entt_mod = entt_dep.module("zig-ecs");
 
+    const components_mod = b.createModule(.{
+        .root_source_file = b.path("src/domain/components/mod.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "raylib", .module = raylib_mod },
+        },
+    });
+
+    const systems_mod = b.createModule(.{
+        .root_source_file = b.path("src/domain/systems.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "entt", .module = entt_mod },
+            .{ .name = "components", .module = components_mod },
+            .{ .name = "raylib", .module = raylib_mod },
+        },
+    });
+
+    const factory_mod = b.createModule(.{
+        .root_source_file = b.path("src/domain/factory.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{
+            .{ .name = "entt", .module = entt_mod },
+            .{ .name = "components", .module = components_mod },
+            .{ .name = "raylib", .module = raylib_mod },
+        },
+    });
+
     const app_mod = b.createModule(.{
         .root_source_file = b.path("src/app/app.zig"),
         .target = target,
@@ -32,6 +63,9 @@ pub fn build(b: *std.Build) void {
         .imports = &.{
             .{ .name = "raylib", .module = raylib_mod },
             .{ .name = "entt", .module = entt_mod },
+            .{ .name = "components", .module = components_mod },
+            .{ .name = "systems", .module = systems_mod },
+            .{ .name = "factory", .module = factory_mod },
         },
     });
 
