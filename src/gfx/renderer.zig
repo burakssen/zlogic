@@ -19,63 +19,156 @@ const InteractionState = editor_state.InteractionState;
 const GRID_SIZE = Theme.grid_size;
 
 pub const RenderSystem = struct {
+    camera: rl.Camera2D,
+
     pub fn init() RenderSystem {
-        return .{};
+        return .{
+            .camera = .{
+                .offset = .{ .x = 0, .y = 0 },
+                .target = .{ .x = 0, .y = 0 },
+                .rotation = 0,
+                .zoom = 1.0,
+            },
+        };
     }
 
     pub fn update(self: *RenderSystem, registry: *entt.Registry, window_size: rl.Vector2, state: AppState) void {
-        _ = self;
+        // Handle Zoom/Pan Input directly here or in InputSystem? 
+        // Usually InputSystem. But for simplicity, let's do basic camera control here or let InputSystem do it.
+        // If I put it here, I don't need to change AppState right now.
+        // But "InputSystem" is for "Logic" input. Camera control is often considered part of Input/Window handling.
+        // Let's check mouse wheel here for zoom.
+        
+        const wheel = rl.GetMouseWheelMove();
+        if (wheel != 0) {
+            const mouseWorldPos = rl.GetScreenToWorld2D(rl.GetMousePosition(), self.camera);
+            self.camera.offset = rl.GetMousePosition();
+            self.camera.target = mouseWorldPos;
+            const scale_factor = 1.0 + (0.25 * @abs(wheel));
+            if (wheel < 0) {
+                self.camera.zoom = @max(0.125, self.camera.zoom / scale_factor);
+            } else {
+                self.camera.zoom = @min(64.0, self.camera.zoom * scale_factor);
+            }
+        }
+        
+        if (rl.IsMouseButtonDown(rl.MOUSE_BUTTON_RIGHT)) {
+            const delta = rl.GetMouseDelta();
+            const delta_v = rl.Vector2Scale(delta, -1.0 / self.camera.zoom);
+            self.camera.target = rl.Vector2Add(self.camera.target, delta_v);
+        }
+
         rl.BeginDrawing();
         defer rl.EndDrawing();
 
         rl.ClearBackground(Theme.background);
 
-        drawGrid(window_size);
-        drawWires(registry);
-        drawGates(registry, state);
-        drawSelectionHighlights(registry, state);
-        drawSelectionBox(state);
-        drawInteractions(registry, window_size, state);
+        rl.BeginMode2D(self.camera);
+            // Draw world content
+            // Grid needs to be huge or dynamic. 
+            // For now, let's draw a larger grid centered around target?
+            // Or just draw fixed grid but it won't cover everything if panned.
+            // Let's try drawing grid based on camera view?
+            drawGrid(window_size, self.camera);
+            drawWires(registry);
+            drawGates(registry, state);
+            drawSelectionHighlights(registry, state);
+            drawSelectionBox(state);
+            drawWorldInteractions(registry, window_size, state, self.camera);
+        rl.EndMode2D();
+
+        // UI
+        drawUIInteractions(registry, window_size, state);
         drawToolbar(window_size, state);
 
         rl.DrawFPS(10, 10);
     }
 };
 
+fn getNormalizedRect(rect: rl.Rectangle) rl.Rectangle {
+    var r = rect;
+    if (r.width < 0) {
+        r.x += r.width;
+        r.width *= -1;
+    }
+    if (r.height < 0) {
+        r.y += r.height;
+        r.height *= -1;
+    }
+    return r;
+}
+
 fn drawSelectionBox(state: AppState) void {
     switch (state.interaction) {
         .BoxSelecting => |rect| {
-            rl.DrawRectangleLinesEx(rect, 1.0, Theme.wire_active);
-            rl.DrawRectangleRec(rect, rl.Fade(Theme.wire_active, 0.1));
+            const norm_rect = getNormalizedRect(rect);
+            rl.DrawRectangleLinesEx(norm_rect, 1.0, Theme.wire_active);
+            rl.DrawRectangleRec(norm_rect, rl.Fade(Theme.wire_active, 0.1));
         },
         else => {},
     }
 }
 
 fn drawSelectionHighlights(registry: *entt.Registry, state: AppState) void {
+    if (state.selected_entities.items.len == 0) return;
+
+    var min_x: f32 = std.math.inf(f32);
+    var min_y: f32 = std.math.inf(f32);
+    var max_x: f32 = -std.math.inf(f32);
+    var max_y: f32 = -std.math.inf(f32);
+
     for (state.selected_entities.items) |entity| {
         if (registry.tryGetConst(Transform, entity)) |t| {
             if (registry.tryGetConst(Gate, entity)) |g| {
                 const rect = g.getRect(t.position);
-                const highlight_rect = rl.Rectangle{ .x = rect.x - 2, .y = rect.y - 2, .width = rect.width + 4, .height = rect.height + 4 };
-                rl.DrawRectangleRoundedLines(highlight_rect, 0.3, 8, Theme.wire_active);
+                min_x = @min(min_x, rect.x);
+                min_y = @min(min_y, rect.y);
+                max_x = @max(max_x, rect.x + rect.width);
+                max_y = @max(max_y, rect.y + rect.height);
             }
         }
+        
+        if (registry.tryGetConst(Wire, entity)) |w| {
+            min_x = @min(min_x, @min(w.start.x, w.end.x));
+            min_y = @min(min_y, @min(w.start.y, w.end.y));
+            max_x = @max(max_x, @max(w.start.x, w.end.x));
+            max_y = @max(max_y, @max(w.start.y, w.end.y));
+        }
+    }
+
+    if (min_x != std.math.inf(f32)) {
+        const padding = 4.0;
+        const rect = rl.Rectangle{
+            .x = min_x - padding,
+            .y = min_y - padding,
+            .width = (max_x - min_x) + padding * 2.0,
+            .height = (max_y - min_y) + padding * 2.0
+        };
+        rl.DrawRectangleRoundedLines(rect, 0.1, 8, Theme.wire_active);
     }
 }
 
-fn drawGrid(window_size: rl.Vector2) void {
-    const width = @as(c_int, @intFromFloat(window_size.x));
-    const height = @as(c_int, @intFromFloat(window_size.y));
+fn drawGrid(window_size: rl.Vector2, camera: rl.Camera2D) void {
+    // Calculate visible world area
+    const screen_w = window_size.x;
+    const screen_h = window_size.y;
+    
+    const top_left = rl.GetScreenToWorld2D(.{ .x = 0, .y = 0 }, camera);
+    const bottom_right = rl.GetScreenToWorld2D(.{ .x = screen_w, .y = screen_h }, camera);
+    
+    const start_x = @floor(top_left.x / @as(f32, @floatFromInt(GRID_SIZE))) * @as(f32, @floatFromInt(GRID_SIZE));
+    const end_x = bottom_right.x;
+    const start_y = @floor(top_left.y / @as(f32, @floatFromInt(GRID_SIZE))) * @as(f32, @floatFromInt(GRID_SIZE));
+    const end_y = bottom_right.y;
 
-    var x: i32 = 0;
-    while (x < width) : (x += GRID_SIZE) {
-        rl.DrawLine(x, 0, x, height, Theme.grid_line);
+    var x = start_x;
+    while (x < end_x) : (x += @as(f32, @floatFromInt(GRID_SIZE))) {
+        rl.DrawLineV(.{ .x = x, .y = top_left.y }, .{ .x = x, .y = bottom_right.y }, Theme.grid_line);
     }
 
-    var y: i32 = 0;
-    while (y < height) : (y += GRID_SIZE) {
-        rl.DrawLine(0, y, width, y, Theme.grid_line);
+    var y = start_y;
+    while (y < end_y) : (y += @as(f32, @floatFromInt(GRID_SIZE))) {
+        rl.DrawLineV(.{ .x = top_left.x, .y = y }, .{ .x = bottom_right.x, .y = y }, Theme.grid_line);
     }
 }
 
@@ -103,7 +196,7 @@ fn drawGates(registry: *entt.Registry, state: AppState) void {
     while (it.next()) |entity| {
         const transform = registry.getConst(Transform, entity);
         const gate = registry.getConst(Gate, entity);
-        drawGateBody(gate, transform.position);
+        drawGateBody(gate, transform.position, state);
 
         // Draw Label
         if (registry.tryGetConst(Label, entity)) |label| {
@@ -142,7 +235,7 @@ fn drawLabel(label: Label, pos: rl.Vector2, gate_width: f32, interaction: Intera
     }
 }
 
-fn drawGateBody(gate: Gate, position: rl.Vector2) void {
+fn drawGateBody(gate: Gate, position: rl.Vector2, state: AppState) void {
     const body_rect = rl.Rectangle{
         .x = position.x + 5,
         .y = position.y + 5,
@@ -243,17 +336,26 @@ fn drawGateBody(gate: Gate, position: rl.Vector2) void {
         rl.DrawRectangleRoundedLines(body_rect, 0.3, 8, Theme.gate_border);
     }
 
-    const type_text = switch (gate.gate_type) {
-        .AND => "AND",
-        .OR => "OR",
-        .NOT => "NOT",
-        .COMPOUND => "IC",
-        else => "",
-    };
+    var type_text: []const u8 = "";
+    switch (gate.gate_type) {
+        .AND => type_text = "AND",
+        .OR => type_text = "OR",
+        .NOT => type_text = "NOT",
+        .COMPOUND => {
+            type_text = "IC";
+            if (gate.template_id) |tid| {
+                if (tid < state.compound_gates.items.len) {
+                    const template = state.compound_gates.items[tid];
+                    type_text = template.name[0..template.name_len];
+                }
+            }
+        },
+        else => {},
+    }
 
-    const text_width = rl.MeasureText(type_text, 10);
+    const text_width = rl.MeasureText(type_text.ptr, 10);
     rl.DrawText(
-        type_text,
+        type_text.ptr,
         @as(c_int, @intFromFloat(body_rect.x + body_rect.width / 2.0)) - @divTrunc(text_width, 2),
         @as(c_int, @intFromFloat(body_rect.y + body_rect.height / 2.0)) - 5,
         10,
@@ -270,17 +372,29 @@ fn drawPin(pos: rl.Vector2, active: bool) void {
     }
 }
 
-fn drawInteractions(registry: *entt.Registry, window_size: rl.Vector2, state: AppState) void {
+fn drawWorldInteractions(registry: *entt.Registry, window_size: rl.Vector2, state: AppState, camera: rl.Camera2D) void {
+    const mouse_world_pos = rl.GetScreenToWorld2D(rl.GetMousePosition(), camera);
+
     switch (state.interaction) {
         .DrawingWire => |start_pos| {
             if (start_pos) |start| {
-                const mouse_pos = rl.GetMousePosition();
-                rl.DrawLineEx(start, mouse_pos, 2.0, rl.Fade(Theme.wire_inactive, 0.5));
+                rl.DrawLineEx(start, mouse_world_pos, 2.0, rl.Fade(Theme.wire_inactive, 0.5));
             }
         },
         .PlacingGate => {
-            drawPlacementPreview(registry, window_size, state);
+            drawPlacementPreview(registry, window_size, state, mouse_world_pos);
         },
+        .PlacingCompoundGate => {
+            drawPlacementPreview(registry, window_size, state, mouse_world_pos);
+        },
+        else => {},
+    }
+}
+
+fn drawUIInteractions(registry: *entt.Registry, window_size: rl.Vector2, state: AppState) void {
+    _ = registry;
+    _ = window_size;
+    switch (state.interaction) {
         .GateMenu => |data| {
             drawGateMenu(data.position);
         },
@@ -442,11 +556,11 @@ fn drawGateMenu(pos: rl.Vector2) void {
     rl.DrawRectangleRoundedLines(rect, 0.1, 6, Theme.wire_active);
 }
 
-fn drawPlacementPreview(registry: *entt.Registry, window_size: rl.Vector2, state: AppState) void {
-    const mouse_pos = rl.GetMousePosition();
+fn drawPlacementPreview(registry: *entt.Registry, window_size: rl.Vector2, state: AppState, mouse_world_pos: rl.Vector2) void {
+    const mouse_screen_pos = rl.GetMousePosition();
     const toolbar_y = window_size.y - Theme.Layout.toolbar_height;
 
-    if (mouse_pos.y >= toolbar_y) return;
+    if (mouse_screen_pos.y >= toolbar_y) return;
 
     // Check for overlaps with existing gates or pins to hide preview
     var overlap = false;
@@ -457,7 +571,7 @@ fn drawPlacementPreview(registry: *entt.Registry, window_size: rl.Vector2, state
         const g = check_view.getConst(Gate, entity);
 
         // Gate Body
-        if (rl.CheckCollisionPointRec(mouse_pos, g.getRect(t.position))) {
+        if (rl.CheckCollisionPointRec(mouse_world_pos, g.getRect(t.position))) {
             overlap = true;
             break;
         }
@@ -467,7 +581,7 @@ fn drawPlacementPreview(registry: *entt.Registry, window_size: rl.Vector2, state
         if (g.gate_type != .OUTPUT) {
             var i: u8 = 0;
             while (i < g.output_count) : (i += 1) {
-                if (rl.CheckCollisionPointCircle(mouse_pos, g.getOutputPos(t.position, i), pin_radius)) {
+                if (rl.CheckCollisionPointCircle(mouse_world_pos, g.getOutputPos(t.position, i), pin_radius)) {
                     overlap = true;
                     break;
                 }
@@ -476,7 +590,7 @@ fn drawPlacementPreview(registry: *entt.Registry, window_size: rl.Vector2, state
         if (g.gate_type != .INPUT) {
             var i: u8 = 0;
             while (i < g.input_count) : (i += 1) {
-                if (rl.CheckCollisionPointCircle(mouse_pos, g.getInputPos(t.position, i), pin_radius)) {
+                if (rl.CheckCollisionPointCircle(mouse_world_pos, g.getInputPos(t.position, i), pin_radius)) {
                     overlap = true;
                     break;
                 }
@@ -489,7 +603,7 @@ fn drawPlacementPreview(registry: *entt.Registry, window_size: rl.Vector2, state
         var check_wire_it = check_wire_view.entityIterator();
         while (check_wire_it.next()) |e| {
             const w = check_wire_view.getConst(e);
-            if (rl.CheckCollisionPointCircle(mouse_pos, w.start, 8.0) or rl.CheckCollisionPointCircle(mouse_pos, w.end, 8.0)) {
+            if (rl.CheckCollisionPointCircle(mouse_world_pos, w.start, 8.0) or rl.CheckCollisionPointCircle(mouse_world_pos, w.end, 8.0)) {
                 overlap = true;
                 break;
             }
@@ -501,7 +615,7 @@ fn drawPlacementPreview(registry: *entt.Registry, window_size: rl.Vector2, state
 
         // TODO: If placing compound gate, we need to know its size/pins from template to draw ghost correctly
         // For now using default Gate defaults which might be wrong for Compound
-        var temp_gate = Gate{ .gate_type = state.current_gate_type };
+        var temp_gate = Gate.init(state.current_gate_type);
         
         switch (state.interaction) {
             .PlacingCompoundGate => |idx| {
@@ -509,9 +623,21 @@ fn drawPlacementPreview(registry: *entt.Registry, window_size: rl.Vector2, state
                 // Ideally we fetch template and set counts/size here
                 // But for ghost, defaults are okay-ish or we can try to look it up
                 if (idx < state.compound_gates.items.len) {
-                    // const template = state.compound_gates.items[idx];
-                    // We don't have logic to calc size yet here easily without duplication
-                    // Just assume default size for ghost
+                    const template = state.compound_gates.items[idx];
+                    // Calculate counts
+                    var input_count: u8 = 0;
+                    var output_count: u8 = 0;
+                    for (template.gates.items) |g| {
+                        if (g.type == .INPUT) input_count += 1;
+                        if (g.type == .OUTPUT) output_count += 1;
+                    }
+                    temp_gate.input_count = input_count;
+                    temp_gate.output_count = output_count;
+                    
+                    const max_pins = @max(input_count, output_count);
+                    if (max_pins > 2) {
+                        temp_gate.height = @as(f32, @floatFromInt(max_pins)) * 20.0;
+                    }
                 }
             },
             else => {},
@@ -520,14 +646,14 @@ fn drawPlacementPreview(registry: *entt.Registry, window_size: rl.Vector2, state
         const half_w = temp_gate.width / 2.0;
         const half_h = temp_gate.height / 2.0;
 
-        const raw_tl_x = mouse_pos.x - half_w;
-        const raw_tl_y = mouse_pos.y - half_h;
+        const raw_tl_x = mouse_world_pos.x - half_w;
+        const raw_tl_y = mouse_world_pos.y - half_h;
 
         const snapped_tl_x = @round(raw_tl_x / grid_size_f) * grid_size_f;
         const snapped_tl_y = @round(raw_tl_y / grid_size_f) * grid_size_f;
         const place_pos = rl.Vector2{ .x = snapped_tl_x, .y = snapped_tl_y };
 
-        drawGateBody(temp_gate, place_pos); // Ghost
+        drawGateBody(temp_gate, place_pos, state); // Ghost
     }
 }
 
