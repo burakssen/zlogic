@@ -1,6 +1,8 @@
-const rl = @import("raylib").rl;
+const rl = @import("raylib.zig").rl;
 
 pub const Theme = struct {
+    pub const grid_size: i32 = 10;
+
     pub const background = rl.Color{ .r = 30, .g = 30, .b = 46, .a = 255 }; // Dark Blue/Grey
     pub const grid_line = rl.Color{ .r = 49, .g = 50, .b = 68, .a = 255 }; // Lighter Grey
     
@@ -22,5 +24,8 @@ pub const Theme = struct {
         pub const button_width: f32 = 80.0;
         pub const button_padding: f32 = 10.0;
         pub const button_margin_top: f32 = 10.0;
+
+        pub const menu_width: f32 = 140.0;
+        pub const menu_item_height: f32 = 36.0;
     };
 };

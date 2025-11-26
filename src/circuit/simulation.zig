@@ -1,10 +1,12 @@
 const std = @import("std");
-const entt = @import("entt");
-const rl = @import("raylib").rl;
-const components = @import("components");
-const Transform = components.Transform;
+const entt = @import("core").entt;
+const rl = @import("core").rl;
+const components = @import("components.zig");
+const Transform = @import("core").Transform;
+
 const Gate = components.Gate;
 const Wire = components.Wire;
+const CompoundState = components.CompoundState;
 
 pub const Simulation = struct {
     active_points: std.ArrayListUnmanaged(rl.Vector2),
@@ -19,10 +21,10 @@ pub const Simulation = struct {
         self.active_points.deinit(allocator);
     }
 
-    pub fn update(self: *Simulation, registry: *entt.Registry, allocator: std.mem.Allocator) !void {
+    pub fn update(self: *Simulation, registry: *entt.Registry, allocator: std.mem.Allocator) std.mem.Allocator.Error!void {
         self.resetCircuit(registry);
         try self.propagateSignals(registry, allocator);
-        self.computeLogic(registry);
+        try self.computeLogic(registry, allocator);
     }
 
     fn resetCircuit(self: *Simulation, registry: *entt.Registry) void {
@@ -31,8 +33,7 @@ pub const Simulation = struct {
         var gate_it = gate_view.entityIterator();
         while (gate_it.next()) |entity| {
             var gate = registry.get(Gate, entity);
-            gate.inputs[0] = false;
-            gate.inputs[1] = false;
+            gate.inputs = 0;
         }
 
         var wire_view = registry.view(.{Wire}, .{});
@@ -43,7 +44,7 @@ pub const Simulation = struct {
         }
     }
 
-    fn propagateSignals(self: *Simulation, registry: *entt.Registry, allocator: std.mem.Allocator) !void {
+    fn propagateSignals(self: *Simulation, registry: *entt.Registry, allocator: std.mem.Allocator) std.mem.Allocator.Error!void {
         self.active_points.clearRetainingCapacity();
 
         // 1. Collect Active Sources (Gate Outputs that are ON)
@@ -52,8 +53,12 @@ pub const Simulation = struct {
         while (source_it.next()) |entity| {
             const gate = registry.getConst(Gate, entity);
             const transform = registry.getConst(Transform, entity);
-            if (gate.output) {
-                try self.active_points.append(allocator, gate.getOutputPos(transform.position));
+
+            var i: u4 = 0;
+            while (i < gate.output_count) : (i += 1) {
+                if (gate.getOutput(i)) {
+                    try self.active_points.append(allocator, gate.getOutputPos(transform.position, i));
+                }
             }
         }
 
@@ -88,34 +93,53 @@ pub const Simulation = struct {
             var gate = registry.get(Gate, entity);
             const transform = registry.getConst(Transform, entity);
 
-            const in0 = gate.getInputPos(transform.position, 0);
-            const in1 = gate.getInputPos(transform.position, 1);
+            var pin_idx: u4 = 0;
+            while (pin_idx < gate.input_count) : (pin_idx += 1) {
+                const in_pos = gate.getInputPos(transform.position, pin_idx);
 
-            for (self.active_points.items) |pt| {
-                if (!gate.inputs[0] and rl.CheckCollisionPointCircle(pt, in0, 5.0)) {
-                    gate.inputs[0] = true;
+                for (self.active_points.items) |pt| {
+                    if (rl.CheckCollisionPointCircle(pt, in_pos, 5.0)) {
+                        gate.setInput(pin_idx, true);
+                        break; 
+                    }
                 }
-                if (!gate.inputs[1] and rl.CheckCollisionPointCircle(pt, in1, 5.0)) {
-                    gate.inputs[1] = true;
-                }
-
-                if (gate.inputs[0] and gate.inputs[1]) break;
             }
         }
     }
 
-    fn computeLogic(self: *Simulation, registry: *entt.Registry) void {
-        _ = self;
+    fn computeLogic(_: *Simulation, registry: *entt.Registry, allocator: std.mem.Allocator) std.mem.Allocator.Error!void {
         var gate_view = registry.view(.{Gate}, .{});
         var gate_it = gate_view.entityIterator();
         while (gate_it.next()) |entity| {
             var gate = registry.get(Gate, entity);
             switch (gate.gate_type) {
-                .AND => gate.output = gate.inputs[0] and gate.inputs[1],
-                .OR => gate.output = gate.inputs[0] or gate.inputs[1],
-                .NOT => gate.output = !gate.inputs[0],
-                .OUTPUT => gate.output = gate.inputs[0],
-                .INPUT => {}, // State handled by Input system
+                .AND => gate.setOutput(0, gate.getInput(0) and gate.getInput(1)),
+                .OR => gate.setOutput(0, gate.getInput(0) or gate.getInput(1)),
+                .NOT => gate.setOutput(0, !gate.getInput(0)),
+                .OUTPUT => gate.setOutput(0, gate.getInput(0)),
+                .INPUT => {}, 
+                .COMPOUND => {
+                    if (gate.internal_state) |ptr| {
+                        const state = @as(*CompoundState, @ptrCast(@alignCast(ptr)));
+
+                        // Sync In
+                        for (state.input_map.items, 0..) |inner_entity, idx| {
+                            var inner_gate = state.registry.get(Gate, inner_entity);
+                            inner_gate.setOutput(0, gate.getInput(@intCast(idx)));
+                        }
+
+                        // Step Internal Simulation
+                        var inner_sim = Simulation.init();
+                        defer inner_sim.deinit(allocator);
+                        try inner_sim.update(state.registry, allocator);
+
+                        // Sync Out
+                        for (state.output_map.items, 0..) |inner_entity, idx| {
+                            const inner_gate = state.registry.getConst(Gate, inner_entity);
+                            gate.setOutput(@intCast(idx), inner_gate.getOutput(0));
+                        }
+                    }
+                },
             }
         }
     }

@@ -1,15 +1,19 @@
 const std = @import("std");
 const builtin = @import("builtin");
 
-const rl = @import("raylib").rl;
-const entt = @import("entt");
+const rl = @import("core").rl;
+const entt = @import("core").entt;
 
-const components = @import("components");
-const systems = @import("systems");
+const circuit = @import("circuit");
+const editor = @import("editor");
+const gfx = @import("gfx");
 
-const InputSystem = systems.InputSystem;
-const RenderSystem = systems.RenderSystem;
-const types = @import("types");
+const InputSystem = editor.InputSystem;
+const RenderSystem = gfx.RenderSystem;
+const Simulation = circuit.Simulation;
+const AppState = editor.AppState;
+const Gate = circuit.Gate;
+const CompoundState = circuit.CompoundState;
 
 const App = @This();
 
@@ -17,8 +21,8 @@ allocator: std.mem.Allocator,
 window_size: rl.Vector2,
 window_title: [:0]const u8,
 registry: entt.Registry,
-state: types.AppState,
-simulation: systems.Simulation,
+state: AppState,
+simulation: Simulation,
 input_system: InputSystem,
 render_system: RenderSystem,
 
@@ -37,9 +41,11 @@ pub fn init(
         .state = .{
             .interaction = .Idle,
             .current_gate_type = .AND,
+            .selected_entities = .{},
+            .compound_gates = .{},
         },
-        .simulation = systems.Simulation.init(),
-        .input_system = InputSystem.init(),
+        .simulation = Simulation.init(),
+        .input_system = InputSystem.init(allocator),
         .render_system = RenderSystem.init(),
     };
 
@@ -56,6 +62,25 @@ pub fn init(
 }
 
 pub fn deinit(self: *App) void {
+    // Clean up Gate internal states
+    var gate_view = self.registry.view(.{Gate}, .{});
+    var gate_it = gate_view.entityIterator();
+    while (gate_it.next()) |entity| {
+        const gate = self.registry.get(Gate, entity);
+        if (gate.internal_state) |ptr| {
+            const state_ptr = @as(*CompoundState, @ptrCast(@alignCast(ptr)));
+            circuit.factory.destroyCompoundState(self.allocator, state_ptr);
+        }
+    }
+
+    self.state.selected_entities.deinit(self.allocator);
+    for (self.state.compound_gates.items) |*template| {
+        template.gates.deinit(self.allocator);
+        template.wires.deinit(self.allocator);
+    }
+    self.state.compound_gates.deinit(self.allocator);
+
+    self.input_system.deinit();
     self.simulation.deinit(self.allocator);
     self.registry.deinit();
     rl.CloseWindow();
