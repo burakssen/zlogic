@@ -1,4 +1,5 @@
 const std = @import("std");
+const fs = std.fs;
 const core = @import("core");
 const rl = core.rl;
 const entt = core.entt;
@@ -42,28 +43,29 @@ pub const InputSystem = struct {
         self.initial_entity_positions.deinit();
     }
 
-    pub fn update(self: *InputSystem, registry: *entt.Registry, state: *AppState, window_size: rl.Vector2) void {
-        const mouse_pos = rl.GetMousePosition();
+    pub fn update(self: *InputSystem, registry: *entt.Registry, state: *AppState, window_size: rl.Vector2, camera: rl.Camera2D) void {
+        const screen_mouse_pos = rl.GetMousePosition();
+        const world_mouse_pos = rl.GetScreenToWorld2D(screen_mouse_pos, camera);
 
         // 1. Handle Modal/Continuous Interactions
-        if (self.handleLabelEditing(registry, state, mouse_pos)) return;
+        if (self.handleLabelEditing(registry, state, world_mouse_pos)) return;
         if (self.handleTemplateRenaming(state)) return;
-        if (self.handleGateMenu(registry, state, mouse_pos)) return;
-        if (self.handleWireMenu(registry, state, mouse_pos)) return;
-        if (self.handleSelectionMenu(registry, state, mouse_pos)) return;
-        if (self.handleSelectionMovement(registry, state, mouse_pos)) return;
-        if (self.handleBoxSelection(registry, state, mouse_pos)) return;
+        if (self.handleGateMenu(registry, state, screen_mouse_pos)) return;
+        if (self.handleWireMenu(registry, state, screen_mouse_pos)) return;
+        if (self.handleSelectionMenu(registry, state, screen_mouse_pos)) return;
+        if (self.handleSelectionMovement(registry, state, world_mouse_pos)) return;
+        if (self.handleBoxSelection(registry, state, world_mouse_pos)) return;
 
         // 2. Handle Toolbar Interaction
-        if (self.handleToolbar(registry, state, mouse_pos, window_size)) return;
+        if (self.handleToolbar(registry, state, screen_mouse_pos, window_size)) return;
 
         // 3. Handle Canvas Interactions (Clicking, Placing, Wiring)
-        self.handleCanvas(registry, state, mouse_pos);
+        self.handleCanvas(registry, state, world_mouse_pos);
 
         // 4. Handle Cancellation / Context Menu
         if (rl.IsMouseButtonPressed(rl.MOUSE_BUTTON_RIGHT)) {
             if (state.interaction == .Idle) {
-                if (getHoveredGate(registry, mouse_pos)) |entity| {
+                if (getHoveredGate(registry, world_mouse_pos)) |entity| {
                     var is_selected = false;
                     for (state.selected_entities.items) |e| {
                         if (e == entity) {
@@ -73,12 +75,12 @@ pub const InputSystem = struct {
                     }
 
                     if (is_selected) {
-                        state.interaction = .{ .SelectionMenu = mouse_pos };
+                        state.interaction = .{ .SelectionMenu = screen_mouse_pos };
                     } else {
                         state.selected_entities.clearRetainingCapacity();
-                        state.interaction = .{ .GateMenu = .{ .entity = entity, .position = mouse_pos } };
+                        state.interaction = .{ .GateMenu = .{ .entity = entity, .position = screen_mouse_pos } };
                     }
-                } else if (getHoveredWire(registry, mouse_pos)) |entity| {
+                } else if (getHoveredWire(registry, world_mouse_pos)) |entity| {
                     var is_selected = false;
                     for (state.selected_entities.items) |e| {
                         if (e == entity) {
@@ -88,10 +90,10 @@ pub const InputSystem = struct {
                     }
 
                     if (is_selected) {
-                        state.interaction = .{ .SelectionMenu = mouse_pos };
+                        state.interaction = .{ .SelectionMenu = screen_mouse_pos };
                     } else {
                         state.selected_entities.clearRetainingCapacity();
-                        state.interaction = .{ .WireMenu = .{ .entity = entity, .position = mouse_pos } };
+                        state.interaction = .{ .WireMenu = .{ .entity = entity, .position = screen_mouse_pos } };
                     }
                 } else {
                     state.selected_entities.clearRetainingCapacity();
@@ -132,6 +134,14 @@ pub const InputSystem = struct {
                             }
                         }
                         state.selected_entities.clearRetainingCapacity();
+                        state.interaction = .Idle;
+                        return true;
+                    }
+
+                    // Create IC
+                    const create_ic_rect = rl.Rectangle{ .x = menu_x, .y = menu_y + (item_h * 2.0), .width = menu_w, .height = item_h };
+                    if (rl.CheckCollisionPointRec(mouse_pos, create_ic_rect)) {
+                        self.createCompoundGateFromSelection(registry, state);
                         state.interaction = .Idle;
                         return true;
                     }
@@ -238,6 +248,13 @@ pub const InputSystem = struct {
                     const delete_rect = rl.Rectangle{ .x = menu_x, .y = menu_y + item_h, .width = menu_w, .height = item_h };
                     if (rl.CheckCollisionPointRec(mouse_pos, delete_rect)) {
                         self.destroyEntity(registry, data.entity);
+                        state.interaction = .Idle;
+                        return true;
+                    }
+
+                    const save_rect = rl.Rectangle{ .x = menu_x, .y = menu_y + (item_h * 2.0), .width = menu_w, .height = item_h };
+                    if (rl.CheckCollisionPointRec(mouse_pos, save_rect)) {
+                        self.saveCompoundGateToFile(registry, state, data.entity);
                         state.interaction = .Idle;
                         return true;
                     }
@@ -361,6 +378,7 @@ pub const InputSystem = struct {
                             }
                         }
                     }
+                    state.dragged_wires.clearRetainingCapacity();
                     state.interaction = .Idle;
                 } else {
                     // Drag
@@ -390,8 +408,17 @@ pub const InputSystem = struct {
                         const delta = rl.Vector2Subtract(new_pos, old_pos);
                         t.position = new_pos;
 
-                        if (registry.tryGetConst(Gate, entity)) |g| {
-                            updateConnectedWires(registry, g, old_pos, delta);
+                        // Efficiently update connected wires from cache
+                        for (state.dragged_wires.items) |drag_ref| {
+                            if (drag_ref.gate == entity) {
+                                if (registry.tryGet(Wire, drag_ref.wire)) |w| {
+                                    if (drag_ref.is_start) {
+                                        w.start = rl.Vector2Add(w.start, delta);
+                                    } else {
+                                        w.end = rl.Vector2Add(w.end, delta);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -400,6 +427,8 @@ pub const InputSystem = struct {
     }
 
     fn handleToolbar(self: *InputSystem, registry: *entt.Registry, state: *AppState, mouse_pos: rl.Vector2, window_size: rl.Vector2) bool {
+        _ = self;
+        _ = registry;
         const toolbar_y = window_size.y - Theme.Layout.toolbar_height;
 
         if (mouse_pos.y >= toolbar_y) {
@@ -425,23 +454,7 @@ pub const InputSystem = struct {
 
             start_x += 20.0;
 
-            // 2. Create Compound Gate Button (+)
-            const plus_rect = rl.Rectangle{
-                .x = start_x,
-                .y = toolbar_y + Theme.Layout.button_margin_top,
-                .width = Theme.Layout.button_width,
-                .height = Theme.Layout.toolbar_height - (Theme.Layout.button_margin_top * 2.0),
-            };
-
-            if (rl.CheckCollisionPointRec(mouse_pos, plus_rect)) {
-                if (rl.IsMouseButtonPressed(rl.MOUSE_BUTTON_LEFT)) {
-                    self.createCompoundGateFromSelection(registry, state);
-                }
-            }
-
-            start_x += Theme.Layout.button_width + Theme.Layout.button_padding + 20.0;
-
-            // 3. Compound Gates
+            // 2. Compound Gates
             for (state.compound_gates.items, 0..) |_, i| {
                 const rect = rl.Rectangle{
                     .x = start_x,
@@ -507,13 +520,53 @@ pub const InputSystem = struct {
             }
         }
 
+        state.compound_gates.append(self.allocator, template) catch {};
+        state.selected_entities.clearRetainingCapacity();
+
         // Generate a name (e.g. "Gate 1")
         const count = state.compound_gates.items.len + 1;
         const printed = std.fmt.bufPrint(&template.name, "Gate {d}", .{count}) catch "Gate";
         template.name_len = @intCast(printed.len);
+    }
 
-        state.compound_gates.append(self.allocator, template) catch {};
-        state.selected_entities.clearRetainingCapacity();
+    fn cacheConnectedWires(self: *InputSystem, registry: *entt.Registry, state: *AppState) void {
+        state.dragged_wires.clearRetainingCapacity();
+
+        var wire_view = registry.view(.{Wire}, .{});
+        var wire_it = wire_view.entityIterator();
+        while (wire_it.next()) |w_entity| {
+            const wire = wire_view.getConst(w_entity);
+
+            for (state.selected_entities.items) |g_entity| {
+                if (registry.tryGetConst(Gate, g_entity)) |g| {
+                    if (registry.tryGetConst(Transform, g_entity)) |t| {
+                        const checkAndAdd = struct {
+                            fn do(pt: rl.Vector2, target: rl.Vector2, s: *AppState, w: entt.Entity, is_start: bool, gate: entt.Entity, allocator: std.mem.Allocator) void {
+                                if (rl.CheckCollisionPointCircle(target, pt, 1.0)) {
+                                    s.dragged_wires.append(allocator, .{ .wire = w, .is_start = is_start, .gate = gate }) catch {};
+                                }
+                            }
+                        }.do;
+
+                        if (g.gate_type != .OUTPUT) {
+                            var i: u8 = 0;
+                            while (i < g.output_count) : (i += 1) {
+                                checkAndAdd(wire.start, g.getOutputPos(t.position, i), state, w_entity, true, g_entity, self.allocator);
+                                checkAndAdd(wire.end, g.getOutputPos(t.position, i), state, w_entity, false, g_entity, self.allocator);
+                            }
+                        }
+
+                        if (g.gate_type != .INPUT) {
+                            var i: u8 = 0;
+                            while (i < g.input_count) : (i += 1) {
+                                checkAndAdd(wire.start, g.getInputPos(t.position, i), state, w_entity, true, g_entity, self.allocator);
+                                checkAndAdd(wire.end, g.getInputPos(t.position, i), state, w_entity, false, g_entity, self.allocator);
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fn handleCanvas(self: *InputSystem, registry: *entt.Registry, state: *AppState, mouse_pos: rl.Vector2) void {
@@ -583,6 +636,7 @@ pub const InputSystem = struct {
                                 self.initial_entity_positions.put(e, t.position) catch {};
                             }
                         }
+                        self.cacheConnectedWires(registry, state);
                         state.interaction = .{ .MovingSelection = mouse_pos };
                     } else {
                         if (!rl.IsKeyDown(rl.KEY_LEFT_SHIFT)) {
@@ -618,46 +672,164 @@ pub const InputSystem = struct {
             if (g.gate_type == .COMPOUND) {
                 if (g.internal_state) |ptr| {
                     const state = @as(*CompoundState, @ptrCast(@alignCast(ptr)));
+
                     factory.destroyCompoundState(self.allocator, state);
                 }
             }
         }
+
         registry.destroy(entity);
+    }
+
+    const GateJson = struct {
+        type: []const u8,
+
+        offset_x: f32,
+
+        offset_y: f32,
+
+        template_id: ?usize = null,
+    };
+
+    const WireJson = struct {
+        start_x: f32,
+
+        start_y: f32,
+
+        end_x: f32,
+
+        end_y: f32,
+    };
+
+    const CompoundGateTemplateJson = struct {
+        name: []const u8,
+
+        gates: []const GateJson,
+
+        wires: []const WireJson,
+    };
+
+    pub fn saveCompoundGateToFile(self: *InputSystem, registry: *entt.Registry, state: *AppState, entity: entt.Entity) void {
+        if (!registry.valid(entity)) return;
+
+        if (registry.tryGetConst(Gate, entity)) |gate| {
+            if (gate.gate_type != .COMPOUND) return;
+
+            if (gate.template_id) |template_idx| {
+                if (template_idx >= state.compound_gates.items.len) return;
+
+                const template = state.compound_gates.items[template_idx];
+
+                const allocator = self.allocator;
+
+                // Prepare gates for serialization
+
+                var gates_list: std.ArrayList(GateJson) = .empty;
+
+                defer gates_list.deinit(allocator);
+
+                for (template.gates.items) |g| {
+                    gates_list.append(allocator, .{
+                        .type = @tagName(g.type),
+
+                        .offset_x = g.offset.x,
+
+                        .offset_y = g.offset.y,
+
+                        .template_id = g.template_id,
+                    }) catch return;
+                }
+
+                // Prepare wires for serialization
+
+                var wires_list: std.ArrayList(WireJson) = .empty;
+
+                defer wires_list.deinit(allocator);
+
+                for (template.wires.items) |w| {
+                    wires_list.append(allocator, .{
+                        .start_x = w.start_offset.x,
+
+                        .start_y = w.start_offset.y,
+
+                        .end_x = w.end_offset.x,
+
+                        .end_y = w.end_offset.y,
+                    }) catch return;
+                }
+
+                const json_data = CompoundGateTemplateJson{
+                    .name = template.name[0..template.name_len],
+
+                    .gates = gates_list.items,
+
+                    .wires = wires_list.items,
+                };
+
+                var buffer: std.Io.Writer.Allocating = .init(allocator);
+                defer buffer.deinit();
+
+                const format = std.json.fmt(json_data, .{ .whitespace = .indent_2 });
+                format.format(&buffer.writer) catch {
+                    std.debug.print("Error formatting JSON for compound gate.\n", .{});
+                    return;
+                };
+
+                const json_string = buffer.written();
+
+                // Save to file
+
+                const dir_name = "templates";
+
+                std.fs.cwd().makeDir(dir_name) catch |err| {
+                    if (err != error.PathAlreadyExists) {
+                        std.debug.print("Error creating directory '{s}': {any}\n", .{ dir_name, err });
+
+                        return;
+                    }
+                };
+
+                var file_name_buffer: [256]u8 = undefined;
+
+                const base_name = template.name[0..template.name_len];
+
+                if (base_name.len == 0) { // Handle empty name for filename
+
+                    std.debug.print("Cannot save compound gate with empty name.\n", .{});
+
+                    return;
+                }
+
+                const temp_path = std.fmt.bufPrint(&file_name_buffer, "{s}.json", .{base_name}) catch return;
+
+                const full_path = std.fs.path.join(allocator, &.{ dir_name, temp_path }) catch |err| {
+                    std.debug.print("Error constructing file path for '{s}': {any}\n", .{ base_name, err });
+                    return;
+                };
+
+                defer allocator.free(full_path);
+
+                var file = std.fs.cwd().createFile(full_path, .{}) catch |err| {
+                    std.debug.print("Error creating file '{s}': {any}\n", .{ full_path, err });
+
+                    return;
+                };
+
+                defer file.close();
+
+                file.writeAll(json_string) catch |err| {
+                    std.debug.print("Error writing to file '{s}': {any}\n", .{ full_path, err });
+
+                    return;
+                };
+
+                std.debug.print("Compound gate '{s}' saved to '{s}'\n", .{ base_name, full_path });
+            }
+        }
     }
 };
 
 // Helper Functions
-
-fn updateConnectedWires(registry: *entt.Registry, g: Gate, old_pos: rl.Vector2, delta: rl.Vector2) void {
-    var wire_view = registry.view(.{Wire}, .{});
-    var wire_it = wire_view.entityIterator();
-    while (wire_it.next()) |w_entity| {
-        var wire = wire_view.get(w_entity);
-
-        const movePointIfMatch = struct {
-            fn do(pt: *rl.Vector2, target: rl.Vector2, d: rl.Vector2) void {
-                if (rl.CheckCollisionPointCircle(target, pt.*, 1.0)) {
-                    pt.* = rl.Vector2Add(pt.*, d);
-                }
-            }
-        }.do;
-
-        if (g.gate_type != .OUTPUT) {
-            movePointIfMatch(&wire.start, g.getOutputPos(old_pos, 0), delta);
-            movePointIfMatch(&wire.end, g.getOutputPos(old_pos, 0), delta);
-        }
-
-        if (g.gate_type != .INPUT) {
-            movePointIfMatch(&wire.start, g.getInputPos(old_pos, 0), delta);
-            movePointIfMatch(&wire.end, g.getInputPos(old_pos, 0), delta);
-
-            if (g.gate_type != .NOT and g.gate_type != .OUTPUT) {
-                movePointIfMatch(&wire.start, g.getInputPos(old_pos, 1), delta);
-                movePointIfMatch(&wire.end, g.getInputPos(old_pos, 1), delta);
-            }
-        }
-    }
-}
 
 fn getHoveredConnectionPoint(registry: *entt.Registry, mouse_pos: rl.Vector2) ?ConnectionPoint {
     const pin_radius = 8.0;

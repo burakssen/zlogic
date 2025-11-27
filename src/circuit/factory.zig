@@ -135,13 +135,8 @@ pub fn createCompoundGate(
 
     registry.add(entity, gate);
 
-    var label = Label{};
-    if (template.name_len > 0) {
-        const len = @min(template.name_len, 31);
-        @memcpy(label.text[0..len], template.name[0..len]);
-        label.len = @intCast(len);
-    }
-    registry.add(entity, label);
+    // Compound gates start with an empty visual label by default
+    registry.add(entity, Label{});
 }
 
 pub fn splitWire(registry: *entt.Registry, entity: entt.Entity, split_point: rl.Vector2) void {

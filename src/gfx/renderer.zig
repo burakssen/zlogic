@@ -306,34 +306,18 @@ fn drawGateBody(gate: Gate, position: rl.Vector2, state: AppState) void {
     }
 
     // Rectangular Gates (AND, OR, NOT, COMPOUND)
+    rl.DrawRectangleRounded(body_rect, 0.3, 8, Theme.gate_body);
+    rl.DrawRectangleRoundedLines(body_rect, 0.3, 8, Theme.gate_border);
+
     if (gate.gate_type == .COMPOUND) {
-        // IC Look
-        rl.DrawRectangleRec(body_rect, Theme.gate_body);
-        rl.DrawRectangleLinesEx(body_rect, 2.0, Theme.gate_border);
-
-        // Pin 1 Indicator (Dot on top-left)
-        const dot_radius = 2.5;
-        const dot_pos = rl.Vector2{ 
-            .x = body_rect.x + 8.0, 
-            .y = body_rect.y + 8.0 
+        // Double border for Compound Gates to distinguish them
+        const inner_rect = rl.Rectangle{
+            .x = body_rect.x + 3,
+            .y = body_rect.y + 3,
+            .width = body_rect.width - 6,
+            .height = body_rect.height - 6,
         };
-        rl.DrawCircleV(dot_pos, dot_radius, Theme.gate_border);
-
-        // Notch on the left edge
-        const notch_radius = 6.0;
-        const notch_center = rl.Vector2{ 
-            .x = body_rect.x, 
-            .y = body_rect.y + body_rect.height / 2.0 
-        };
-        // Draw notch as a filled circle with background color, then border arc?
-        // Simplest effective look: Darker semi-circle stroke or just indentation.
-        // Let's draw a filled circle (Theme.background) to "cut" the body, then outline it.
-        rl.DrawCircleV(notch_center, notch_radius, Theme.background);
-        rl.DrawRing(notch_center, notch_radius, notch_radius + 1.5, -90.0, 90.0, 16, Theme.gate_border);
-
-    } else {
-        rl.DrawRectangleRounded(body_rect, 0.3, 8, Theme.gate_body);
-        rl.DrawRectangleRoundedLines(body_rect, 0.3, 8, Theme.gate_border);
+        rl.DrawRectangleRoundedLines(inner_rect, 0.3, 8, Theme.gate_border);
     }
 
     var type_text: []const u8 = "";
@@ -341,15 +325,22 @@ fn drawGateBody(gate: Gate, position: rl.Vector2, state: AppState) void {
         .AND => type_text = "AND",
         .OR => type_text = "OR",
         .NOT => type_text = "NOT",
-        .COMPOUND => {
-            type_text = "IC";
-            if (gate.template_id) |tid| {
-                if (tid < state.compound_gates.items.len) {
-                    const template = state.compound_gates.items[tid];
-                    type_text = template.name[0..template.name_len];
-                }
-            }
-        },
+                                .COMPOUND => {
+                                    if (gate.template_id) |tid| {
+                                        if (tid < state.compound_gates.items.len) {
+                                            const template = state.compound_gates.items[tid];
+                                            if (template.name_len > 0) {
+                                                type_text = template.name[0..template.name_len];
+                                            } else {
+                                                type_text = "";
+                                            }
+                                        } else {
+                                            type_text = ""; // Template ID invalid
+                                        }
+                                    } else {
+                                        type_text = ""; // No template ID
+                                    }
+                                },
         else => {},
     }
 
@@ -411,7 +402,7 @@ fn drawUIInteractions(registry: *entt.Registry, window_size: rl.Vector2, state: 
 fn drawSelectionMenu(pos: rl.Vector2) void {
     const menu_w = Theme.Layout.menu_width;
     const item_h = Theme.Layout.menu_item_height;
-    const menu_h = item_h * 2.0;
+    const menu_h = item_h * 3.0;
 
     // Shadow
     const shadow_offset = 4.0;
@@ -429,17 +420,11 @@ fn drawSelectionMenu(pos: rl.Vector2) void {
     rl.DrawRectangleRounded(rect, 0.1, 6, Theme.gate_body);
 
     // Rename Item
-    const rename_rect = rl.Rectangle{ .x = pos.x, .y = pos.y, .width = menu_w, .height = item_h };
-    if (rl.CheckCollisionPointRec(rl.GetMousePosition(), rename_rect)) {
-        const hover_rect = rl.Rectangle{
-            .x = rename_rect.x + 4,
-            .y = rename_rect.y + 2,
-            .width = rename_rect.width - 8,
-            .height = rename_rect.height - 4,
-        };
-        rl.DrawRectangleRounded(hover_rect, 0.2, 4, Theme.button_hover);
-    }
-
+            const rename_rect = rl.Rectangle{ .x = pos.x, .y = pos.y, .width = menu_w, .height = item_h };
+            if (rl.CheckCollisionPointRec(rl.GetMousePosition(), rename_rect)) {
+                rl.DrawRectangleRec(rename_rect, Theme.button_hover); // Fill the whole item
+                rl.DrawRectangleLinesEx(rename_rect, 2.0, Theme.wire_active); // Add a bright border
+            }
     const text_h = 10; // Font size
     const text_y_offset = (item_h - @as(f32, @floatFromInt(text_h))) / 2.0;
 
@@ -448,15 +433,18 @@ fn drawSelectionMenu(pos: rl.Vector2) void {
     // Delete Item
     const delete_rect = rl.Rectangle{ .x = pos.x, .y = pos.y + item_h, .width = menu_w, .height = item_h };
     if (rl.CheckCollisionPointRec(rl.GetMousePosition(), delete_rect)) {
-        const hover_rect = rl.Rectangle{
-            .x = delete_rect.x + 4,
-            .y = delete_rect.y + 2,
-            .width = delete_rect.width - 8,
-            .height = delete_rect.height - 4,
-        };
-        rl.DrawRectangleRounded(hover_rect, 0.2, 4, Theme.button_hover);
+        rl.DrawRectangleRec(delete_rect, Theme.button_hover); // Fill the whole item
+        rl.DrawRectangleLinesEx(delete_rect, 2.0, Theme.wire_active); // Add a bright border
     }
     rl.DrawText("Delete", @as(c_int, @intFromFloat(pos.x + 14)), @as(c_int, @intFromFloat(pos.y + item_h + text_y_offset)), text_h, Theme.gate_text);
+
+    // Create Compound Gate Item
+    const create_ic_rect = rl.Rectangle{ .x = pos.x, .y = pos.y + (item_h * 2.0), .width = menu_w, .height = item_h };
+    if (rl.CheckCollisionPointRec(rl.GetMousePosition(), create_ic_rect)) {
+        rl.DrawRectangleRec(create_ic_rect, Theme.button_hover); // Fill the whole item
+        rl.DrawRectangleLinesEx(create_ic_rect, 2.0, Theme.wire_active); // Add a bright border
+    }
+    rl.DrawText("Create Compound Gate", @as(c_int, @intFromFloat(pos.x + 14)), @as(c_int, @intFromFloat(pos.y + (item_h * 2.0) + text_y_offset)), text_h, Theme.gate_text);
 
     // Border
     rl.DrawRectangleRoundedLines(rect, 0.1, 6, Theme.wire_active);
@@ -485,13 +473,8 @@ fn drawWireMenu(pos: rl.Vector2) void {
     // Delete Item
     const delete_rect = rl.Rectangle{ .x = pos.x, .y = pos.y, .width = menu_w, .height = item_h };
     if (rl.CheckCollisionPointRec(rl.GetMousePosition(), delete_rect)) {
-        const hover_rect = rl.Rectangle{
-            .x = delete_rect.x + 4,
-            .y = delete_rect.y + 2,
-            .width = delete_rect.width - 8,
-            .height = delete_rect.height - 4,
-        };
-        rl.DrawRectangleRounded(hover_rect, 0.2, 4, Theme.button_hover);
+        rl.DrawRectangleRec(delete_rect, Theme.button_hover); // Fill the whole item
+        rl.DrawRectangleLinesEx(delete_rect, 2.0, Theme.wire_active); // Add a bright border
     }
 
     const text_h = 10;
@@ -505,7 +488,7 @@ fn drawWireMenu(pos: rl.Vector2) void {
 fn drawGateMenu(pos: rl.Vector2) void {
     const menu_w = Theme.Layout.menu_width;
     const item_h = Theme.Layout.menu_item_height;
-    const menu_h = item_h * 2.0;
+    const menu_h = item_h * 3.0; // For Rename, Delete, Save to File
 
     // Shadow
     const shadow_offset = 4.0;
@@ -525,13 +508,8 @@ fn drawGateMenu(pos: rl.Vector2) void {
     // Rename Item
     const rename_rect = rl.Rectangle{ .x = pos.x, .y = pos.y, .width = menu_w, .height = item_h };
     if (rl.CheckCollisionPointRec(rl.GetMousePosition(), rename_rect)) {
-        const hover_rect = rl.Rectangle{
-            .x = rename_rect.x + 4,
-            .y = rename_rect.y + 2,
-            .width = rename_rect.width - 8,
-            .height = rename_rect.height - 4,
-        };
-        rl.DrawRectangleRounded(hover_rect, 0.2, 4, Theme.button_hover);
+        rl.DrawRectangleRec(rename_rect, Theme.button_hover);
+        rl.DrawRectangleLinesEx(rename_rect, 2.0, Theme.wire_active);
     }
 
     const text_h = 10; // Font size
@@ -542,15 +520,18 @@ fn drawGateMenu(pos: rl.Vector2) void {
     // Delete Item
     const delete_rect = rl.Rectangle{ .x = pos.x, .y = pos.y + item_h, .width = menu_w, .height = item_h };
     if (rl.CheckCollisionPointRec(rl.GetMousePosition(), delete_rect)) {
-        const hover_rect = rl.Rectangle{
-            .x = delete_rect.x + 4,
-            .y = delete_rect.y + 2,
-            .width = delete_rect.width - 8,
-            .height = delete_rect.height - 4,
-        };
-        rl.DrawRectangleRounded(hover_rect, 0.2, 4, Theme.button_hover);
+        rl.DrawRectangleRec(delete_rect, Theme.button_hover);
+        rl.DrawRectangleLinesEx(delete_rect, 2.0, Theme.wire_active);
     }
     rl.DrawText("Delete", @as(c_int, @intFromFloat(pos.x + 14)), @as(c_int, @intFromFloat(pos.y + item_h + text_y_offset)), text_h, Theme.gate_text);
+
+    // Save to File Item
+    const save_rect = rl.Rectangle{ .x = pos.x, .y = pos.y + (item_h * 2.0), .width = menu_w, .height = item_h };
+    if (rl.CheckCollisionPointRec(rl.GetMousePosition(), save_rect)) {
+        rl.DrawRectangleRec(save_rect, Theme.button_hover);
+        rl.DrawRectangleLinesEx(save_rect, 2.0, Theme.wire_active);
+    }
+    rl.DrawText("Save to File", @as(c_int, @intFromFloat(pos.x + 14)), @as(c_int, @intFromFloat(pos.y + (item_h * 2.0) + text_y_offset)), text_h, Theme.gate_text);
 
     // Border
     rl.DrawRectangleRoundedLines(rect, 0.1, 6, Theme.wire_active);
@@ -703,33 +684,9 @@ fn drawToolbar(window_size: rl.Vector2, state: AppState) void {
         start_x += Theme.Layout.button_width + Theme.Layout.button_padding;
     }
 
-    // 2. Separator
+    // 2. Compound Gates List
     start_x += 20.0;
 
-    // 3. Create Compound Gate Button (+)
-    const plus_rect = rl.Rectangle{
-        .x = start_x,
-        .y = toolbar_y + Theme.Layout.button_margin_top,
-        .width = Theme.Layout.button_width,
-        .height = Theme.Layout.toolbar_height - (Theme.Layout.button_margin_top * 2.0),
-    };
-
-    var plus_color = Theme.button_inactive;
-    if (rl.CheckCollisionPointRec(rl.GetMousePosition(), plus_rect)) {
-        plus_color = Theme.button_hover;
-    }
-    // Visual feedback if clicked is handled by InputSystem, but here we can just show hover.
-
-    rl.DrawRectangleRec(plus_rect, plus_color);
-    rl.DrawRectangleLinesEx(plus_rect, 2.0, Theme.button_border);
-
-    const plus_text = "+";
-    const plus_w = rl.MeasureText(plus_text, 30);
-    rl.DrawText(plus_text, @as(c_int, @intFromFloat(plus_rect.x + plus_rect.width / 2.0)) - @divTrunc(plus_w, 2), @as(c_int, @intFromFloat(plus_rect.y + plus_rect.height / 2.0)) - 15, 30, Theme.gate_text);
-
-    start_x += Theme.Layout.button_width + Theme.Layout.button_padding + 20.0;
-
-    // 4. Compound Gates List
     for (state.compound_gates.items, 0..) |template, i| {
         const rect = rl.Rectangle{
             .x = start_x,

@@ -19,9 +19,16 @@ pub const InteractionState = union(enum) {
     MovingSelection: rl.Vector2,
 };
 
+pub const WireDragRef = struct {
+    wire: entt.Entity,
+    is_start: bool,
+    gate: entt.Entity,
+};
+
 pub const AppState = struct {
     interaction: InteractionState,
     current_gate_type: GateType,
     selected_entities: std.ArrayListUnmanaged(entt.Entity),
+    dragged_wires: std.ArrayListUnmanaged(WireDragRef),
     compound_gates: std.ArrayListUnmanaged(CompoundGateTemplate),
 };

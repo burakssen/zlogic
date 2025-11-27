@@ -42,6 +42,7 @@ pub fn init(
             .interaction = .Idle,
             .current_gate_type = .AND,
             .selected_entities = .{},
+            .dragged_wires = .{},
             .compound_gates = .{},
         },
         .simulation = Simulation.init(),
@@ -74,6 +75,7 @@ pub fn deinit(self: *App) void {
     }
 
     self.state.selected_entities.deinit(self.allocator);
+    self.state.dragged_wires.deinit(self.allocator);
     for (self.state.compound_gates.items) |*template| {
         template.gates.deinit(self.allocator);
         template.wires.deinit(self.allocator);
@@ -99,7 +101,7 @@ pub fn run(self: *App) void {
 }
 
 fn update(self: *App) void {
-    self.input_system.update(&self.registry, &self.state, self.window_size);
+    self.input_system.update(&self.registry, &self.state, self.window_size, self.render_system.camera);
     self.simulation.update(&self.registry, self.allocator) catch |err| {
         std.debug.print("Simulation error: {}\n", .{err});
     };

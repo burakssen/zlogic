@@ -1,0 +1,61 @@
+{
+  "name": "NAND",
+  "gates": [
+    {
+      "type": "NOT",
+      "offset_x": 240,
+      "offset_y": 10,
+      "template_id": null
+    },
+    {
+      "type": "OUTPUT",
+      "offset_x": 340,
+      "offset_y": 10,
+      "template_id": null
+    },
+    {
+      "type": "INPUT",
+      "offset_x": 0,
+      "offset_y": 30,
+      "template_id": null
+    },
+    {
+      "type": "INPUT",
+      "offset_x": 0,
+      "offset_y": 0,
+      "template_id": null
+    },
+    {
+      "type": "AND",
+      "offset_x": 160,
+      "offset_y": 10,
+      "template_id": null
+    }
+  ],
+  "wires": [
+    {
+      "start_x": 300,
+      "start_y": 30,
+      "end_x": 340,
+      "end_y": 30
+    },
+    {
+      "start_x": 220,
+      "start_y": 30,
+      "end_x": 240,
+      "end_y": 30
+    },
+    {
+      "start_x": 60,
+      "start_y": 50,
+      "end_x": 160,
+      "end_y": 40
+    },
+    {
+      "start_x": 60,
+      "start_y": 20,
+      "end_x": 160,
+      "end_y": 20
+    }
+  ]
+}

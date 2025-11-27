@@ -7,6 +7,7 @@ pub const Theme = struct {
     pub const grid_line = rl.Color{ .r = 49, .g = 50, .b = 68, .a = 255 }; // Lighter Grey
     
     pub const gate_body = rl.Color{ .r = 69, .g = 71, .b = 90, .a = 255 };
+    pub const ic_body = rl.Color{ .r = 45, .g = 45, .b = 60, .a = 255 };
     pub const gate_border = rl.Color{ .r = 147, .g = 153, .b = 178, .a = 255 };
     pub const gate_text = rl.Color{ .r = 205, .g = 214, .b = 244, .a = 255 };
     
